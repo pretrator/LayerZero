@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: LayerZero
-Version: 0.1.2
+Version: 0.1.3
 Summary: Build Pytorch Based NN Projects Faster
 Author-email: Ujjwal Srivastava <recs.cse1645@gmail.com>
 License: MIT

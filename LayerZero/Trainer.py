@@ -19,21 +19,15 @@ Notes:
 """
 
 from __future__ import annotations
-import Helper
+from .Helper import Helper
 import os
-import math
-import time
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
-
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Optional, Tuple
 import torch
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 import numpy as np
-
-# Optional: lightweight typed callback interface
-
 
 @dataclass
 class TrainerConfig:
@@ -110,7 +104,6 @@ class CheckpointCallback(Callback):
         filepath = os.path.join(self.save_dir, f"checkpoint_epoch{epoch}.pt")
         metric = logs.get(self.monitor)
         if metric is None and self.save_best_only:
-            # nothing to compare; still save latest
             trainer._save_checkpoint(filepath)
             return
         if not self.save_best_only:
@@ -291,7 +284,7 @@ class Trainer:
 
             # combined metric for checkpoint decision
             monitored = (
-                logs.get(f"val_{self.config.monitor.split("_")[-1]}")
+                logs.get(f"val_{self.config.monitor.split('_')[-1]}")
                 or logs.get(self.config.monitor)
                 or None
             )
