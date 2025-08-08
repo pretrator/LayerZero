@@ -1,0 +1,14 @@
+Metadata-Version: 2.4
+Name: LayerZero
+Version: 0.1.1
+Summary: Build Pytorch Based NN Projects Faster
+Author-email: Ujjwal Srivastava <recs.cse1645@gmail.com>
+License: MIT
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Requires-Dist: torch
+Requires-Dist: matplotlib
+Requires-Dist: numpy
+Requires-Dist: torchvision
+Requires-Dist: requests
+Requires-Dist: tqdm

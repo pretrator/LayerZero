@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "LayerZero"
+version = "0.1.1"
+description = "Build Pytorch Based NN Projects Faster"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Ujjwal Srivastava", email = "recs.cse1645@gmail.com" }]
+requires-python = ">=3.8"
+dependencies = [
+    "torch",
+    "matplotlib",
+    "numpy",
+    "torchvision",
+    "requests",
+    "tqdm"
+]
