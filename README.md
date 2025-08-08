@@ -1,0 +1,50 @@
+# LayerZero
+
+**LayerZero** is a modular PyTorch training framework designed to simplify deep learning experiments.  
+It includes:
+- A **highly configurable Trainer class** for managing training loops, validation, and callbacks.
+- An **ImageDataLoader** with an advanced augmentation pipeline.
+- A **Helper utility** for tracking metrics and plotting training/validation loss curves.
+- Support for custom metrics and model checkpointing.
+
+---
+
+## 📌 Features
+
+### 1. **Trainer**
+- Clean and modular training loop — no boilerplate needed.
+- Tracks **loss and custom metrics** during training and validation.
+- Supports **callbacks** such as model checkpoint saving.
+- Works with **any PyTorch model** and dataset.
+- Logs progress with clear and formatted output.
+- Easy integration with the `Helper` class for metric visualization.
+
+---
+
+### 2. **ImageDataLoader**
+A robust, class-based image loading pipeline that:
+- Uses **Torchvision datasets** (e.g., CIFAR-10, MNIST, ImageNet).
+- Applies **state-of-the-art augmentations**:
+  - Random horizontal flips
+  - Random rotations
+  - Random resized crops
+  - Color jitter
+  - (Optional) **TrivialAugmentWide** for stronger generalization
+- Normalizes images using dataset-specific mean and standard deviation.
+- Returns **ready-to-use DataLoader** objects for both training and testing.
+
+---
+
+### 3. **Helper**
+- Tracks training and validation metrics (loss, accuracy, etc.).
+- Can plot **loss curves** after training:
+  - Training loss over epochs
+  - Validation loss over epochs
+- Saves plots automatically for experiment tracking.
+
+---
+
+## 🚀 Installation
+
+```bash
+pip install torch torchvision matplotlib
