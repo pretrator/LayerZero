@@ -282,6 +282,9 @@ class Trainer:
 
         pbar = tqdm(enumerate(dataloader), total=len(dataloader), desc=("Train" if is_train else "Eval"))
         self.optimizer.zero_grad()
+        
+        # Track if we've hit a torch.compile error
+        compile_failed = False
 
         for batch_idx, (X, y) in pbar:
             for cb in self.callbacks:
@@ -298,14 +301,45 @@ class Trainer:
             
             batch_size = X.shape[0]
 
-            with torch.set_grad_enabled(is_train):
-                if self.config.amp and self.device.type == "cuda":
-                    with torch.cuda.amp.autocast():
+            try:
+                with torch.set_grad_enabled(is_train):
+                    if self.config.amp and self.device.type == "cuda":
+                        # Use modern torch.amp.autocast API (PyTorch 1.10+)
+                        # Falls back to torch.cuda.amp.autocast for older versions
+                        try:
+                            autocast_context = torch.amp.autocast('cuda')
+                        except AttributeError:
+                            autocast_context = torch.cuda.amp.autocast()
+                        
+                        with autocast_context:
+                            logits = self.model(X)
+                            loss = self.loss_fn(logits, y)
+                    else:
                         logits = self.model(X)
                         loss = self.loss_fn(logits, y)
-                else:
-                    logits = self.model(X)
-                    loss = self.loss_fn(logits, y)
+            except Exception as e:
+                # Catch torch.compile errors and provide helpful feedback
+                error_msg = str(e)
+                if 'Dynamo' in error_msg or 'FakeTensor' in error_msg or 'compile' in error_msg.lower():
+                    if not compile_failed:
+                        compile_failed = True
+                        print("\n" + "="*60)
+                        print("⚠️  TORCH.COMPILE ERROR DETECTED")
+                        print("="*60)
+                        print("torch.compile() failed during execution.")
+                        print("This is likely a model architecture issue.")
+                        print("\nCommon causes:")
+                        print("  • Dimension mismatch in model layers")
+                        print("  • Dynamic shapes not supported")
+                        print("  • Unsupported operations")
+                        print("\nSuggestions:")
+                        print("  1. Fix your model architecture")
+                        print("  2. Or disable compilation: TrainerConfig(compile_model=False)")
+                        print("  3. Check model with a single forward pass first")
+                        print("\nOriginal error:")
+                        print(f"  {error_msg[:200]}...")
+                        print("="*60 + "\n")
+                raise
 
             # normalize loss across accumulation steps
             loss_value = loss.detach().item() if isinstance(loss, torch.Tensor) else float(loss)
