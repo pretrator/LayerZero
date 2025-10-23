@@ -140,26 +140,12 @@ class Trainer:
         config: TrainerConfig = TrainerConfig(),
         metrics: Optional[Dict[str, Callable[[torch.Tensor, torch.Tensor], float]]] = None,
         callbacks: Optional[List[Callback]] = None,
-        gpu_augmentation: Optional[Any] = None,
-        data_loader: Optional[Any] = None,  # ImageDataLoader for auto GPU augmentation
     ):
         self.config = config
         self.metrics = metrics or {}
         self.callbacks = callbacks or []
         self.helper = Helper()
-        
-        # Auto-detect GPU augmentation from ImageDataLoader
-        if gpu_augmentation is None and data_loader is not None:
-            # Check if it's an ImageDataLoader with GPU augmentation enabled
-            if hasattr(data_loader, 'use_gpu_augmentation') and data_loader.use_gpu_augmentation:
-                if hasattr(data_loader, 'get_gpu_augmentation'):
-                    self.gpu_augmentation = data_loader.get_gpu_augmentation()
-                else:
-                    self.gpu_augmentation = None
-            else:
-                self.gpu_augmentation = None
-        else:
-            self.gpu_augmentation = gpu_augmentation
+        self.gpu_augmentation = None  # Detected lazily in fit()
 
         self.device = config.device or (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
         
@@ -198,21 +184,6 @@ class Trainer:
             print(f"\nℹ️  Training on {self.device.type.upper()}")
             if self.device.type == "cpu":
                 print("   Note: Mixed precision (AMP) not available on CPU\n")
-        
-        # GPU Augmentation status
-        if self.gpu_augmentation is not None:
-            auto_detected = gpu_augmentation is None and data_loader is not None
-            print("\n" + "="*60)
-            print("🎨 GPU AUGMENTATION INTEGRATED")
-            print("="*60)
-            if auto_detected:
-                print("Source: Auto-detected from ImageDataLoader")
-            else:
-                print("Source: Manually provided")
-            print("Status: GPU augmentation will be applied automatically")
-            print("Location: After data transfer to GPU, before forward pass")
-            print("Applied: Training only (not validation/test)")
-            print("="*60 + "\n")
         
         os.makedirs(self.config.save_dir, exist_ok=True)
         self._best_metric = None
@@ -401,10 +372,30 @@ class Trainer:
         train_loader: DataLoader,
         val_loader: Optional[DataLoader] = None,
         epochs: Optional[int] = None,
+        data_loader: Optional[Any] = None,  # ImageDataLoader for auto GPU augmentation detection
     ) -> List[Dict[str, Any]]:
         epochs = epochs or self.config.epochs
         stop_training = False
         early_stopper = next((c for c in self.callbacks if isinstance(c, EarlyStopping)), None)
+        
+        # Detect GPU augmentation from ImageDataLoader (only once at start of training)
+        # EAFP: Easier to Ask for Forgiveness than Permission (Pythonic!)
+        if self.gpu_augmentation is None and data_loader is not None:
+            try:
+                if data_loader.use_gpu_augmentation:
+                    self.gpu_augmentation = data_loader.get_gpu_augmentation()
+                    if self.gpu_augmentation is not None:
+                        print("\n" + "="*60)
+                        print("🎨 GPU AUGMENTATION DETECTED & ENABLED")
+                        print("="*60)
+                        print("Source: Auto-detected from ImageDataLoader")
+                        print("Status: Will be applied automatically during training")
+                        print("Location: After data transfer to GPU, before forward pass")
+                        print("Applied: Training only (not validation/test)")
+                        print("="*60 + "\n")
+            except (AttributeError, TypeError):
+                # Not an ImageDataLoader or GPU augmentation not available
+                pass
 
         for epoch in range(1, epochs + 1):
             for cb in self.callbacks:

@@ -91,11 +91,14 @@ trainer = Trainer(
     model=model,
     loss_fn=nn.CrossEntropyLoss(),
     optimizer=torch.optim.Adam(model.parameters()),
-    config=config,
-    data_loader=loader  # Auto-detects GPU augmentation!
+    config=config
 )
 
-results = trainer.fit(train_loader, test_loader)
+results = trainer.fit(
+    train_loader, 
+    test_loader,
+    data_loader=loader  # Auto-detects GPU augmentation!
+)
 ```
 
 ---
@@ -128,22 +131,18 @@ loader = ImageDataLoader(
 
 train_loader, test_loader = loader.get_loaders()
 
-# GPU augmentation auto-detected and applied automatically!
+# GPU augmentation auto-detected when fit() is called!
 trainer = Trainer(
     model=model,
     loss_fn=nn.CrossEntropyLoss(),
     optimizer=torch.optim.Adam(model.parameters()),
-    config=config,
-    data_loader=loader  # ← Pass loader, Trainer auto-detects GPU aug!
+    config=config
 )
 
-# Alternative: Manual specification
-trainer = Trainer(
-    model=model,
-    loss_fn=nn.CrossEntropyLoss(),
-    optimizer=torch.optim.Adam(model.parameters()),
-    config=config,
-    gpu_augmentation=loader.get_gpu_augmentation()  # Explicit
+trainer.fit(
+    train_loader,
+    test_loader,
+    data_loader=loader  # ← Pass loader here, Trainer auto-detects GPU aug!
 )
 
 # Manual usage in custom training loops
@@ -243,13 +242,18 @@ Trainer(
     config,
     metrics=None,
     callbacks=None,
-    gpu_augmentation=None,  # Optional: Manual GPU augmentation
-    data_loader=None,       # Optional: ImageDataLoader for auto-detection
 )
 
-trainer.fit(train_loader, val_loader)  # Run training
-trainer.evaluate(dataloader)           # Evaluate on data
-trainer.predict(dataloader)            # Get predictions
+# Run training with optional GPU augmentation auto-detection
+trainer.fit(
+    train_loader, 
+    val_loader,
+    epochs=None,        # Optional: Override config.epochs
+    data_loader=None    # Optional: ImageDataLoader for GPU aug auto-detection
+)
+
+trainer.evaluate(dataloader)  # Evaluate on data
+trainer.predict(dataloader)   # Get predictions
 ```
 
 ### KorniaHelper
