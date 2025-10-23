@@ -141,12 +141,25 @@ class Trainer:
         metrics: Optional[Dict[str, Callable[[torch.Tensor, torch.Tensor], float]]] = None,
         callbacks: Optional[List[Callback]] = None,
         gpu_augmentation: Optional[Any] = None,
+        data_loader: Optional[Any] = None,  # ImageDataLoader for auto GPU augmentation
     ):
         self.config = config
         self.metrics = metrics or {}
         self.callbacks = callbacks or []
-        self.gpu_augmentation = gpu_augmentation
         self.helper = Helper()
+        
+        # Auto-detect GPU augmentation from ImageDataLoader
+        if gpu_augmentation is None and data_loader is not None:
+            # Check if it's an ImageDataLoader with GPU augmentation enabled
+            if hasattr(data_loader, 'use_gpu_augmentation') and data_loader.use_gpu_augmentation:
+                if hasattr(data_loader, 'get_gpu_augmentation'):
+                    self.gpu_augmentation = data_loader.get_gpu_augmentation()
+                else:
+                    self.gpu_augmentation = None
+            else:
+                self.gpu_augmentation = None
+        else:
+            self.gpu_augmentation = gpu_augmentation
 
         self.device = config.device or (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
         
@@ -188,9 +201,14 @@ class Trainer:
         
         # GPU Augmentation status
         if self.gpu_augmentation is not None:
+            auto_detected = gpu_augmentation is None and data_loader is not None
             print("\n" + "="*60)
             print("🎨 GPU AUGMENTATION INTEGRATED")
             print("="*60)
+            if auto_detected:
+                print("Source: Auto-detected from ImageDataLoader")
+            else:
+                print("Source: Manually provided")
             print("Status: GPU augmentation will be applied automatically")
             print("Location: After data transfer to GPU, before forward pass")
             print("Applied: Training only (not validation/test)")

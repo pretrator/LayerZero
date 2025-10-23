@@ -92,7 +92,7 @@ trainer = Trainer(
     loss_fn=nn.CrossEntropyLoss(),
     optimizer=torch.optim.Adam(model.parameters()),
     config=config,
-    gpu_augmentation=loader.get_gpu_augmentation()  # Auto-applied!
+    data_loader=loader  # Auto-detects GPU augmentation!
 )
 
 results = trainer.fit(train_loader, test_loader)
@@ -122,22 +122,31 @@ loader = ImageDataLoader(
 # Automatic integration with Trainer (Recommended)
 loader = ImageDataLoader(
     CIFAR10,
-    use_gpu_augmentation='auto',  # Auto-detect
+    use_gpu_augmentation='auto',  # Auto-detect GPU and Kornia
     auto_install_kornia=True       # Install if missing
 )
 
 train_loader, test_loader = loader.get_loaders()
 
-# GPU augmentation applied automatically in training loop
+# GPU augmentation auto-detected and applied automatically!
 trainer = Trainer(
     model=model,
     loss_fn=nn.CrossEntropyLoss(),
     optimizer=torch.optim.Adam(model.parameters()),
     config=config,
-    gpu_augmentation=loader.get_gpu_augmentation()  # ← Automatic!
+    data_loader=loader  # ← Pass loader, Trainer auto-detects GPU aug!
 )
 
-# Manual usage (if needed)
+# Alternative: Manual specification
+trainer = Trainer(
+    model=model,
+    loss_fn=nn.CrossEntropyLoss(),
+    optimizer=torch.optim.Adam(model.parameters()),
+    config=config,
+    gpu_augmentation=loader.get_gpu_augmentation()  # Explicit
+)
+
+# Manual usage in custom training loops
 gpu_aug = loader.get_gpu_augmentation(device='cuda')
 
 for X, y in train_loader:
@@ -234,7 +243,8 @@ Trainer(
     config,
     metrics=None,
     callbacks=None,
-    gpu_augmentation=None,  # Optional: Auto-apply GPU augmentation
+    gpu_augmentation=None,  # Optional: Manual GPU augmentation
+    data_loader=None,       # Optional: ImageDataLoader for auto-detection
 )
 
 trainer.fit(train_loader, val_loader)  # Run training
