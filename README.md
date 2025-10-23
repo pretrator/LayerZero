@@ -7,6 +7,7 @@ A modular PyTorch training framework with automatic performance optimizations.
 ### Trainer
 - Model compilation via `torch.compile()` (PyTorch 2.0+)
 - Mixed precision training (AMP)
+- Automatic GPU augmentation integration
 - Asynchronous CUDA data transfers
 - Metric tracking and logging
 - Model checkpointing
@@ -72,10 +73,11 @@ loader = ImageDataLoader(
     root='./data',
     image_size=32,
     batch_size=128,
-    download=True
+    download=True,
+    use_gpu_augmentation='auto'  # Automatic GPU acceleration
 )
 
-train_loader, test_loader = loader.get_dataloaders()
+train_loader, test_loader = loader.get_loaders()
 
 # Training configuration
 config = TrainerConfig(
@@ -87,14 +89,13 @@ config = TrainerConfig(
 # Train
 trainer = Trainer(
     model=model,
-    train_loader=train_loader,
-    val_loader=test_loader,
     loss_fn=nn.CrossEntropyLoss(),
     optimizer=torch.optim.Adam(model.parameters()),
     config=config,
+    gpu_augmentation=loader.get_gpu_augmentation()  # Auto-applied!
 )
 
-results = trainer.train()
+results = trainer.fit(train_loader, test_loader)
 ```
 
 ---
@@ -118,13 +119,25 @@ loader = ImageDataLoader(
 ### GPU Augmentation
 
 ```python
+# Automatic integration with Trainer (Recommended)
 loader = ImageDataLoader(
     CIFAR10,
     use_gpu_augmentation='auto',  # Auto-detect
     auto_install_kornia=True       # Install if missing
 )
 
-# Manual usage
+train_loader, test_loader = loader.get_loaders()
+
+# GPU augmentation applied automatically in training loop
+trainer = Trainer(
+    model=model,
+    loss_fn=nn.CrossEntropyLoss(),
+    optimizer=torch.optim.Adam(model.parameters()),
+    config=config,
+    gpu_augmentation=loader.get_gpu_augmentation()  # ← Automatic!
+)
+
+# Manual usage (if needed)
 gpu_aug = loader.get_gpu_augmentation(device='cuda')
 
 for X, y in train_loader:
@@ -216,16 +229,17 @@ TrainerConfig(
 ```python
 Trainer(
     model,
-    train_loader,
-    val_loader,
     loss_fn,
     optimizer,
     config,
+    metrics=None,
+    callbacks=None,
+    gpu_augmentation=None,  # Optional: Auto-apply GPU augmentation
 )
 
-trainer.train()                    # Run training
-trainer.predict(dataloader)        # Get predictions
-trainer.save_checkpoint(path)      # Save model
+trainer.fit(train_loader, val_loader)  # Run training
+trainer.evaluate(dataloader)           # Evaluate on data
+trainer.predict(dataloader)            # Get predictions
 ```
 
 ### KorniaHelper

@@ -140,10 +140,12 @@ class Trainer:
         config: TrainerConfig = TrainerConfig(),
         metrics: Optional[Dict[str, Callable[[torch.Tensor, torch.Tensor], float]]] = None,
         callbacks: Optional[List[Callback]] = None,
+        gpu_augmentation: Optional[Any] = None,
     ):
         self.config = config
         self.metrics = metrics or {}
         self.callbacks = callbacks or []
+        self.gpu_augmentation = gpu_augmentation
         self.helper = Helper()
 
         self.device = config.device or (torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"))
@@ -183,6 +185,16 @@ class Trainer:
             print(f"\nℹ️  Training on {self.device.type.upper()}")
             if self.device.type == "cpu":
                 print("   Note: Mixed precision (AMP) not available on CPU\n")
+        
+        # GPU Augmentation status
+        if self.gpu_augmentation is not None:
+            print("\n" + "="*60)
+            print("🎨 GPU AUGMENTATION INTEGRATED")
+            print("="*60)
+            print("Status: GPU augmentation will be applied automatically")
+            print("Location: After data transfer to GPU, before forward pass")
+            print("Applied: Training only (not validation/test)")
+            print("="*60 + "\n")
         
         os.makedirs(self.config.save_dir, exist_ok=True)
         self._best_metric = None
@@ -290,6 +302,11 @@ class Trainer:
             # This allows CPU to continue preparing next batch while GPU transfers current batch
             X = X.to(self.device, non_blocking=True)
             y = y.to(self.device, non_blocking=True)
+            
+            # Apply GPU augmentation if enabled (training only)
+            if is_train and self.gpu_augmentation is not None:
+                X = self.gpu_augmentation(X)
+            
             batch_size = X.shape[0]
 
             with torch.set_grad_enabled(is_train):
