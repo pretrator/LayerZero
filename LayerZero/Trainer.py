@@ -469,7 +469,7 @@ class Trainer:
 
         if val_loader is not None:
             try:
-                self.helper.plot_train_test_loss(self._history)
+                self.helper.plotTrainTestLoss(self._history)
             except Exception as e:
                 print(f"Could not plot losses: {e}")
         return self._history
