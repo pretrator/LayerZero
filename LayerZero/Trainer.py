@@ -26,7 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import torch
 from torch import nn, optim
 from torch.utils.data import DataLoader
-from tqdm.auto import tqdm
+from tqdm import tqdm
 import numpy as np
 
 @dataclass
@@ -629,7 +629,7 @@ class Trainer:
         early_stopper = next((c for c in self.callbacks if isinstance(c, EarlyStopping)), None)
         
         # Auto-detect GPU augmentation from train_loader's attached ImageDataLoader
-        # EAFP: Easier to Ask for Forgiveness than Permission (Pythonic!)
+        # EAFP: Easier to Ask for Forgiveness xx Permission (Pythonic!)
         if self.gpu_augmentation is None:
             try:
                 # Try to get ImageDataLoader instance from train_loader
