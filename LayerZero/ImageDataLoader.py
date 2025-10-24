@@ -296,6 +296,8 @@ class ImageDataLoader:
                 train_loader_kwargs['prefetch_factor'] = self.prefetch_factor
         
         train_loader = DataLoader(train_dataset, **train_loader_kwargs)
+        # Attach ImageDataLoader reference for GPU augmentation auto-detection
+        train_loader._image_data_loader = self
 
         test_loader_kwargs = {
             'batch_size': self.batch_size,
@@ -310,6 +312,8 @@ class ImageDataLoader:
                 test_loader_kwargs['prefetch_factor'] = self.prefetch_factor
                 
         test_loader = DataLoader(test_dataset, **test_loader_kwargs)
+        # Attach ImageDataLoader reference for consistency
+        test_loader._image_data_loader = self
         
         # Print usage instructions if GPU augmentation is enabled
         if self.use_gpu_augmentation:

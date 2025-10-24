@@ -51,6 +51,7 @@ class TrainerConfig:
           * Memory usage profiling
           * Operation timing analysis
           * Bottleneck identification
+          * Auto-installs torch-tb-profiler plugin when enabled
         
         Performance Impact (typical usage):
         - TensorBoard enabled (default): < 1% overhead (only epoch-end logging)
@@ -176,6 +177,32 @@ class TensorBoardCallback(Callback):
         Open TensorBoard in your browser: tensorboard --logdir=runs
         View profiler traces in the "PYTORCH_PROFILER" tab
     """
+    
+    @staticmethod
+    def _is_torch_tb_profiler_available():
+        """Check if torch-tb-profiler is installed."""
+        try:
+            import torch_tb_profiler
+            return True
+        except ImportError:
+            return False
+    
+    @staticmethod
+    def _install_torch_tb_profiler():
+        """Auto-install torch-tb-profiler package."""
+        import subprocess
+        import sys
+        
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "-q", "torch-tb-profiler"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE
+            )
+            return True
+        except subprocess.CalledProcessError:
+            return False
+    
     def __init__(
         self,
         log_dir: str = "runs",
@@ -191,6 +218,14 @@ class TensorBoardCallback(Callback):
         try:
             from torch.utils.tensorboard import SummaryWriter
             import datetime
+            
+            # Auto-install torch-tb-profiler if profiler is enabled
+            if use_profiler and not self._is_torch_tb_profiler_available():
+                print("\n📦 torch-tb-profiler not found, installing...")
+                if self._install_torch_tb_profiler():
+                    print("✅ torch-tb-profiler installed - PYTORCH_PROFILER tab will be available\n")
+                else:
+                    print("⚠️  Auto-install failed. Manual install: pip install torch-tb-profiler\n")
             
             # Create unique run name with timestamp
             timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -210,27 +245,22 @@ class TensorBoardCallback(Callback):
             self.profiler_schedule_active = profiler_schedule_active
             self.profiler_schedule_repeat = profiler_schedule_repeat
             
-            print("\n" + "="*60)
-            print("📊 TENSORBOARD LOGGING ENABLED")
-            print("="*60)
-            print(f"Log directory: {self.log_dir}")
-            print(f"Logging: Losses, Metrics, Learning Rate")
+            # Build logging info
+            features = ["Loss/Metrics/LR"]
             if log_graph:
-                print(f"Logging: Model Graph (on first batch)")
+                features.append("Model Graph")
             if log_gradients:
-                print(f"Logging: Gradient Histograms")
+                features.append("Gradients")
             if use_profiler:
-                print(f"Logging: PyTorch Profiler (Performance Analysis)")
-                print(f"  Schedule: wait={profiler_schedule_wait}, warmup={profiler_schedule_warmup}, active={profiler_schedule_active}, repeat={profiler_schedule_repeat}")
-            print("\nTo view in real-time:")
-            print(f"  Colab/Kaggle: %load_ext tensorboard then %tensorboard --logdir={log_dir}")
-            print(f"  Local: tensorboard --logdir={log_dir}")
-            print("  Then open: http://localhost:6006")
-            if use_profiler:
-                print("\n  📊 View profiler traces in TensorBoard:")
-                print("     - Install: pip install torch-tb-profiler")
-                print("     - Look for 'PYTORCH_PROFILER' or 'PROFILE' tab")
-            print("="*60 + "\n")
+                features.append(f"Profiler(wait={profiler_schedule_wait},warmup={profiler_schedule_warmup},active={profiler_schedule_active},repeat={profiler_schedule_repeat})")
+            
+            print(f"\n📊 TensorBoard: {', '.join(features)}")
+            print(f"   Dir: {self.log_dir}")
+            print(f"   View: tensorboard --logdir={log_dir}")
+            if use_profiler and self._is_torch_tb_profiler_available():
+                print(f"   Profiler: Look for PYTORCH_PROFILER tab\n")
+            else:
+                print()
             
         except ImportError:
             print("\n⚠️  TensorBoard not available. Install with: pip install tensorboard")
@@ -261,10 +291,10 @@ class TensorBoardCallback(Callback):
                 )
                 
                 self.profiler.__enter__()
-                print(f"✅ PyTorch Profiler started (traces will be saved to {self.log_dir})")
+                print(f"✅ Profiler started → {self.log_dir}\n")
                 
             except Exception as e:
-                print(f"⚠️  Could not initialize PyTorch Profiler: {e}")
+                print(f"⚠️  Profiler init failed: {e}\n")
                 self.profiler = None
                 self.use_profiler = False
     
@@ -323,7 +353,6 @@ class TensorBoardCallback(Callback):
         if hasattr(self, 'profiler') and self.profiler is not None:
             try:
                 self.profiler.__exit__(None, None, None)
-                print("✅ PyTorch Profiler closed")
             except Exception:
                 pass
         
@@ -384,25 +413,17 @@ class Trainer:
         self.scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
         
         # Print AMP status
+        device_name = torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else "CUDA"
         if amp_enabled:
-            print("\n" + "="*60)
-            print("⚡ MIXED PRECISION TRAINING ENABLED ⚡")
-            print("="*60)
-            print("Using: Automatic Mixed Precision (AMP)")
-            print("Precision: FP16 for forward/backward, FP32 for weights")
-            print(f"Device: {torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else 'CUDA'}")
-            print("Benefits:")
-            print("  • 2-3x faster training")
-            print("  • 50% less GPU memory")
-            print("  • No accuracy loss (with gradient scaling)")
-            print("="*60 + "\n")
+            print(f"\n⚡ AMP (FP16): {device_name} | 2-3x faster, 50% less memory\n")
         elif self.device.type == "cuda" and not config.amp:
-            print("\nℹ️  Mixed precision (AMP) is disabled.")
-            print("   Enable for 2-3x speedup: TrainerConfig(amp=True)\n")
+            print(f"\nℹ️  AMP disabled | Enable for 2-3x speedup: TrainerConfig(amp=True)\n")
         else:
             print(f"\nℹ️  Training on {self.device.type.upper()}")
             if self.device.type == "cpu":
-                print("   Note: Mixed precision (AMP) not available on CPU\n")
+                print("   (AMP not available on CPU)\n")
+            else:
+                print()
         
         os.makedirs(self.config.save_dir, exist_ok=True)
         self._best_metric = None
@@ -435,25 +456,13 @@ class Trainer:
             return model
         
         if not compile_available:
-            print("\n⚠️  torch.compile() not available (requires PyTorch 2.0+)")
-            print("   Current PyTorch version:", torch.__version__)
-            print("   Upgrade: pip install torch>=2.0.0\n")
+            print(f"\n⚠️  torch.compile() unavailable (PyTorch {torch.__version__} < 2.0)\n")
             return model
         
         # Compile the model
         try:
-            print("\n" + "="*60)
-            print("🔥 MODEL COMPILATION ENABLED 🔥")
-            print("="*60)
-            print("Using: torch.compile() [PyTorch 2.0+]")
-            print(f"Mode: {self.config.compile_mode}")
-            print(f"Device: {torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else 'CUDA'}")
-            print("Benefits:")
-            print("  • 20-50% faster training")
-            print("  • Graph optimizations (operator fusion, etc.)")
-            print("  • Automatic kernel selection")
-            print("Note: First epoch will be slower (compilation overhead)")
-            print("="*60 + "\n")
+            device_name = torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else "CUDA"
+            print(f"\n🔥 torch.compile(mode={self.config.compile_mode}): {device_name} | 20-50% faster (1st epoch slower)\n")
             
             compiled_model = torch.compile(
                 model,
@@ -463,8 +472,7 @@ class Trainer:
             return compiled_model
             
         except Exception as e:
-            print(f"\n⚠️  Model compilation failed: {e}")
-            print("   Continuing with non-compiled model\n")
+            print(f"\n⚠️  Compilation failed: {str(e)[:100]}... | Using non-compiled model\n")
             return model
 
     def _save_checkpoint(self, path: str):
@@ -544,22 +552,8 @@ class Trainer:
                 if 'Dynamo' in error_msg or 'FakeTensor' in error_msg or 'compile' in error_msg.lower():
                     if not compile_failed:
                         compile_failed = True
-                        print("\n" + "="*60)
-                        print("⚠️  TORCH.COMPILE ERROR DETECTED")
-                        print("="*60)
-                        print("torch.compile() failed during execution.")
-                        print("This is likely a model architecture issue.")
-                        print("\nCommon causes:")
-                        print("  • Dimension mismatch in model layers")
-                        print("  • Dynamic shapes not supported")
-                        print("  • Unsupported operations")
-                        print("\nSuggestions:")
-                        print("  1. Fix your model architecture")
-                        print("  2. Or disable compilation: TrainerConfig(compile_model=False)")
-                        print("  3. Check model with a single forward pass first")
-                        print("\nOriginal error:")
-                        print(f"  {error_msg[:200]}...")
-                        print("="*60 + "\n")
+                        print(f"\n⚠️  torch.compile() error: {error_msg[:150]}...")
+                        print("   Fix: Check model architecture OR set compile_model=False\n")
                 raise
 
             # normalize loss across accumulation steps
@@ -629,29 +623,23 @@ class Trainer:
         train_loader: DataLoader,
         val_loader: Optional[DataLoader] = None,
         epochs: Optional[int] = None,
-        data_loader: Optional[Any] = None,  # ImageDataLoader for auto GPU augmentation detection
     ) -> List[Dict[str, Any]]:
         epochs = epochs or self.config.epochs
         stop_training = False
         early_stopper = next((c for c in self.callbacks if isinstance(c, EarlyStopping)), None)
         
-        # Detect GPU augmentation from ImageDataLoader (only once at start of training)
+        # Auto-detect GPU augmentation from train_loader's attached ImageDataLoader
         # EAFP: Easier to Ask for Forgiveness than Permission (Pythonic!)
-        if self.gpu_augmentation is None and data_loader is not None:
+        if self.gpu_augmentation is None:
             try:
-                if data_loader.use_gpu_augmentation:
-                    self.gpu_augmentation = data_loader.get_gpu_augmentation()
+                # Try to get ImageDataLoader instance from train_loader
+                image_data_loader = getattr(train_loader, '_image_data_loader', None)
+                if image_data_loader is not None and image_data_loader.use_gpu_augmentation:
+                    self.gpu_augmentation = image_data_loader.get_gpu_augmentation()
                     if self.gpu_augmentation is not None:
-                        print("\n" + "="*60)
-                        print("🎨 GPU AUGMENTATION DETECTED & ENABLED")
-                        print("="*60)
-                        print("Source: Auto-detected from ImageDataLoader")
-                        print("Status: Will be applied automatically during training")
-                        print("Location: After data transfer to GPU, before forward pass")
-                        print("Applied: Training only (not validation/test)")
-                        print("="*60 + "\n")
+                        print("\n🎨 GPU Augmentation: Auto-detected from train_loader (training only)\n")
             except (AttributeError, TypeError):
-                # Not an ImageDataLoader or GPU augmentation not available
+                # Not from ImageDataLoader or GPU augmentation not available
                 pass
 
         for epoch in range(1, epochs + 1):
