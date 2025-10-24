@@ -35,12 +35,14 @@ class GPUAugmentation(nn.Module):
     - Operates on batches (more efficient than per-image)
     - Utilizes GPU compute (frees CPU for other tasks)
     - Fully differentiable (can be used in training)
+    - Auto-detects grayscale vs RGB (skips color augs for grayscale)
     
     Args:
         image_size (int): Target image size
-        mode (str): 'light', 'standard', or 'heavy'
+        mode (AugmentationMode): OFF, MINIMAL, BASIC, or STRONG
         device (str): 'cuda' or 'cpu'
         p (float): Probability of applying augmentations
+        channels (int, optional): Number of channels (1=grayscale, 3=RGB). Auto-detected if None.
     """
     
     def __init__(
@@ -49,6 +51,7 @@ class GPUAugmentation(nn.Module):
         mode=AugmentationMode.BASIC,
         device='cuda',
         p=0.5,
+        channels=None,  # Auto-detect if None
     ):
         super().__init__()
         
@@ -63,44 +66,57 @@ class GPUAugmentation(nn.Module):
         self.image_size = image_size
         self.mode = mode
         self.device = device
+        self.channels = channels  # Will be auto-detected on first forward pass if None
+        self.K = K  # Store for later use
+        self.transforms = None  # Will be initialized on first forward pass
+        self._initialized = False
         
-        # Build augmentation pipeline based on mode
+    def _build_transforms(self, channels):
+        """Build augmentation pipeline based on number of channels."""
         augs = []
+        is_grayscale = (channels == 1)
         
         if self.mode == AugmentationMode.OFF:
             # No augmentation
             augs = []
             
         elif self.mode == AugmentationMode.MINIMAL:
-            # MINIMAL: Fast augmentations only
+            # MINIMAL: Fast augmentations only (geometry only, no color)
             augs = [
-                K.RandomHorizontalFlip(p=0.5),
-                K.RandomCrop((image_size, image_size), pad_if_needed=True),
+                self.K.RandomHorizontalFlip(p=0.5),
+                self.K.RandomCrop((self.image_size, self.image_size), pad_if_needed=True),
             ]
             
         elif self.mode == AugmentationMode.BASIC:
-            # BASIC: Standard augmentations for production
+            # BASIC: Standard augmentations
             augs = [
-                K.RandomResizedCrop((image_size, image_size), scale=(0.2, 1.0), ratio=(0.75, 1.33), p=1.0),
-                K.RandomHorizontalFlip(p=0.5),
-                K.ColorJitter(0.4, 0.4, 0.4, 0.1, p=0.5),
+                self.K.RandomResizedCrop((self.image_size, self.image_size), scale=(0.2, 1.0), ratio=(0.75, 1.33), p=1.0),
+                self.K.RandomHorizontalFlip(p=0.5),
             ]
+            # Only add color augmentations for RGB images
+            if not is_grayscale:
+                augs.append(self.K.ColorJitter(0.4, 0.4, 0.4, 0.1, p=0.5))
             
         elif self.mode == AugmentationMode.STRONG:
             # STRONG: Maximum augmentation strength
             augs = [
-                K.RandomResizedCrop((image_size, image_size), scale=(0.08, 1.0), ratio=(0.75, 1.33), p=1.0),
-                K.RandomHorizontalFlip(p=0.5),
-                K.ColorJitter(0.4, 0.4, 0.4, 0.1, p=0.8),
-                K.RandomRotation(degrees=10.0, p=0.3),
-                K.RandomGaussianBlur((3, 3), (0.1, 2.0), p=0.2),
-                K.RandomErasing(p=0.25, scale=(0.02, 0.33), ratio=(0.3, 3.3)),
+                self.K.RandomResizedCrop((self.image_size, self.image_size), scale=(0.08, 1.0), ratio=(0.75, 1.33), p=1.0),
+                self.K.RandomHorizontalFlip(p=0.5),
             ]
+            # Only add color augmentations for RGB images
+            if not is_grayscale:
+                augs.append(self.K.ColorJitter(0.4, 0.4, 0.4, 0.1, p=0.8))
+            # Geometry augmentations work for both RGB and grayscale
+            augs.extend([
+                self.K.RandomRotation(degrees=10.0, p=0.3),
+                self.K.RandomGaussianBlur((3, 3), (0.1, 2.0), p=0.2),
+                self.K.RandomErasing(p=0.25, scale=(0.02, 0.33), ratio=(0.3, 3.3)),
+            ])
         
         # Create augmentation container
-        self.transforms = K.AugmentationSequential(*augs, data_keys=["input"])
-        self.transforms = self.transforms.to(device)
-        
+        transforms = self.K.AugmentationSequential(*augs, data_keys=["input"])
+        return transforms.to(self.device)
+    
     def forward(self, x):
         """
         Apply augmentations to a batch of images.
@@ -111,11 +127,23 @@ class GPUAugmentation(nn.Module):
         Returns:
             torch.Tensor: Augmented images [B, C, H, W]
         """
+        # Auto-detect channels on first forward pass
+        if not self._initialized:
+            if self.channels is None:
+                self.channels = x.shape[1]  # Detect from input
+            self.transforms = self._build_transforms(self.channels)
+            self._initialized = True
+            
+            # Log what's being used
+            aug_type = "Grayscale" if self.channels == 1 else "RGB"
+            print(f"🎨 GPU Aug: {aug_type} ({self.mode.name}) | {len(self.transforms)} transforms")
+        
         # Kornia expects input in range [0, 1]
         return self.transforms(x)
     
     def __repr__(self):
-        return f"GPUAugmentation(mode={self.mode}, device={self.device}, transforms={len(self.transforms)})"
+        num_transforms = len(self.transforms) if self._initialized else "auto"
+        return f"GPUAugmentation(mode={self.mode}, device={self.device}, transforms={num_transforms})"
 
 
 class HybridAugmentation(nn.Module):

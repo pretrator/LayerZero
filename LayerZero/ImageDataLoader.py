@@ -250,7 +250,8 @@ class ImageDataLoader:
             return GPUAugmentation(
                 image_size=self.image_size,
                 mode=self.augmentation_mode,  # Use same mode
-                device=device
+                device=device,
+                channels=self.channels  # Pass channels to avoid runtime detection
             )
         except ImportError as e:
             print(f"⚠️  Could not import GPUAugmentation: {e}")
