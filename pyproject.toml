@@ -16,5 +16,6 @@ dependencies = [
     "numpy",
     "torchvision",
     "requests",
-    "tqdm"
+    "tqdm",
+    "tensorboard"
 ]

@@ -3,7 +3,14 @@ __version__ = "0.2.3"
 
 from .ImageDataLoader import ImageDataLoader
 from .Helper import Helper
-from .Trainer import Trainer, TrainerConfig
+from .Trainer import (
+    Trainer, 
+    TrainerConfig, 
+    Callback, 
+    EarlyStopping, 
+    CheckpointCallback, 
+    TensorBoardCallback
+)
 from .AugmentationMode import AugmentationMode
 
 # Kornia helper utilities (always available)
@@ -22,7 +29,11 @@ try:
         "ImageDataLoader", 
         "Helper", 
         "Trainer", 
-        "TrainerConfig", 
+        "TrainerConfig",
+        "Callback",
+        "EarlyStopping",
+        "CheckpointCallback",
+        "TensorBoardCallback",
         "AugmentationMode",
         "GPUAugmentation", 
         "HybridAugmentation",
@@ -37,7 +48,11 @@ except ImportError:
         "ImageDataLoader", 
         "Helper", 
         "Trainer", 
-        "TrainerConfig", 
+        "TrainerConfig",
+        "Callback",
+        "EarlyStopping",
+        "CheckpointCallback",
+        "TensorBoardCallback",
         "AugmentationMode",
         "KorniaHelper",
         "is_kornia_available",

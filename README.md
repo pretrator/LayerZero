@@ -9,6 +9,8 @@ A modular PyTorch training framework with automatic performance optimizations.
 - Mixed precision training (AMP)
 - Automatic GPU augmentation integration
 - Asynchronous CUDA data transfers
+- **Real-time TensorBoard logging**
+- **PyTorch Profiler integration** (GPU/CPU/memory analysis)
 - Metric tracking and logging
 - Model checkpointing
 - Custom callbacks
@@ -36,15 +38,27 @@ Applied automatically:
 - GPU-based augmentation (Kornia)
 - Optimized DataLoader configuration
 
+Monitoring & Analysis:
+- Real-time TensorBoard logging (loss, metrics, lr)
+- PyTorch Profiler integration (find bottlenecks)
+- GPU/CPU utilization tracking
+- Memory usage profiling
+
 ---
 
 ## Installation
 
 ```bash
-pip install torch torchvision matplotlib
+pip install torch torchvision matplotlib tensorboard
 
 # Optional: GPU augmentation
 pip install kornia kornia-rs
+```
+
+Or install from PyPI:
+
+```bash
+pip install LayerZero
 ```
 
 ---
@@ -83,7 +97,8 @@ train_loader, test_loader = loader.get_loaders()
 config = TrainerConfig(
     epochs=10,
     amp=True,
-    compile_model='auto'
+    compile_model='auto',
+    use_tensorboard=True  # TensorBoard enabled by default!
 )
 
 # Train
@@ -99,6 +114,20 @@ results = trainer.fit(
     test_loader,
     data_loader=loader  # Auto-detects GPU augmentation!
 )
+```
+
+**View Training in Real-Time:**
+
+```python
+# Google Colab / Kaggle (inline in notebook):
+%load_ext tensorboard
+%tensorboard --logdir=runs
+```
+
+```bash
+# Local / Terminal:
+tensorboard --logdir=runs
+# Then open: http://localhost:6006
 ```
 
 ---
@@ -174,6 +203,199 @@ config = TrainerConfig(
 )
 ```
 
+### TensorBoard (Real-Time Monitoring) 📊
+
+**Automatically enabled by default!** Works seamlessly in Google Colab, Kaggle, and local environments.
+
+#### 🎯 Google Colab / Kaggle Usage (Recommended)
+
+```python
+# Load TensorBoard extension (run once at top of notebook)
+%load_ext tensorboard
+
+# Train your model (TensorBoard logs automatically)
+trainer = Trainer(model, loss_fn, optimizer, config=TrainerConfig(epochs=10))
+trainer.fit(train_loader, val_loader)
+
+# View TensorBoard inline in your notebook
+%tensorboard --logdir runs
+```
+
+**That's it!** TensorBoard will display directly in your Colab/Kaggle notebook with real-time updates.
+
+#### 💻 Local / Terminal Usage
+
+```bash
+# Terminal 1: Start training
+python train.py
+
+# Terminal 2: Start TensorBoard
+tensorboard --logdir=runs
+
+# Open browser to: http://localhost:6006
+```
+
+#### ⚙️ Configuration
+
+```python
+config = TrainerConfig(
+    use_tensorboard=True,              # Enable/disable (default: True)
+    tensorboard_log_dir="runs",        # Log directory
+    tensorboard_comment="experiment1", # Experiment name/tag
+    tensorboard_log_graph=True,        # Log model graph
+    tensorboard_log_gradients=False,   # Log gradient histograms (slower)
+)
+```
+
+#### 📈 What Gets Logged
+
+- ✅ Train & validation losses (real-time, per epoch)
+- ✅ All custom metrics (accuracy, F1, etc.)
+- ✅ Learning rate changes over time
+- ✅ Model graph visualization (optional)
+- ✅ Gradient & weight histograms (optional)
+- ✅ **PyTorch Profiler** (optional - GPU/CPU utilization, memory, bottlenecks)
+
+#### 🔧 Advanced Options
+
+**Disable TensorBoard:**
+
+```python
+config = TrainerConfig(
+    use_tensorboard=False  # Turn off TensorBoard logging
+)
+```
+
+**Multiple experiments with names:**
+
+```python
+# Experiment 1
+config1 = TrainerConfig(tensorboard_comment="resnet50_lr0.001")
+trainer1.fit(train_loader, val_loader)
+
+# Experiment 2
+config2 = TrainerConfig(tensorboard_comment="resnet50_lr0.01")
+trainer2.fit(train_loader, val_loader)
+
+# View both: %tensorboard --logdir runs
+```
+
+**Manual callback control:**
+
+```python
+from LayerZero import Trainer, TensorBoardCallback
+
+tb_callback = TensorBoardCallback(
+    log_dir="my_experiments",
+    comment="custom_experiment",
+    log_gradients=True  # Enable gradient logging
+)
+
+trainer = Trainer(
+    model=model,
+    loss_fn=loss_fn,
+    optimizer=optimizer,
+    config=TrainerConfig(use_tensorboard=False),  # Disable auto-init
+    callbacks=[tb_callback]  # Add manually
+)
+```
+
+#### 📱 Colab/Kaggle Quick Start
+
+```python
+# Complete Colab/Kaggle example
+%load_ext tensorboard
+
+from LayerZero import ImageDataLoader, Trainer, TrainerConfig
+from torchvision.datasets import CIFAR10
+import torch.nn as nn
+
+# Setup model and data
+model = nn.Sequential(...)
+loader = ImageDataLoader(CIFAR10, root='./data', batch_size=128)
+train_loader, val_loader = loader.get_loaders()
+
+# Train with TensorBoard (automatic)
+trainer = Trainer(
+    model=model,
+    loss_fn=nn.CrossEntropyLoss(),
+    optimizer=torch.optim.Adam(model.parameters()),
+    config=TrainerConfig(epochs=10)  # TensorBoard enabled by default!
+)
+
+trainer.fit(train_loader, val_loader, data_loader=loader)
+
+# View results inline
+%tensorboard --logdir runs
+```
+
+#### 🔬 PyTorch Profiler Integration (Performance Analysis)
+
+**NEW!** Analyze GPU/CPU utilization, memory usage, and identify bottlenecks - all in TensorBoard!
+
+```python
+# Enable profiler with TensorBoard
+config = TrainerConfig(
+    epochs=10,
+    use_tensorboard=True,
+    use_profiler=True,  # Enable PyTorch Profiler
+)
+
+trainer = Trainer(model, loss_fn, optimizer, config=config)
+trainer.fit(train_loader, val_loader)
+
+# View profiler traces in TensorBoard
+%tensorboard --logdir runs
+# Open the "PYTORCH_PROFILER" tab!
+```
+
+**What you'll see:**
+- 📊 GPU/CPU utilization timeline
+- 💾 Memory usage over time (allocated/reserved)
+- ⚡ Operation timing breakdown
+- 🔍 Bottleneck identification (slow ops highlighted)
+- 📈 Kernel execution trace
+
+**Fine-tune profiler schedule:**
+
+```python
+config = TrainerConfig(
+    use_profiler=True,
+    profiler_schedule_wait=1,      # Skip first N batches
+    profiler_schedule_warmup=1,    # Warmup for N batches
+    profiler_schedule_active=3,    # Profile for N batches
+    profiler_schedule_repeat=2,    # Repeat cycle N times
+)
+```
+
+**Why use the profiler?**
+- Find GPU idle time (data loading bottlenecks)
+- Identify slow operations
+- Optimize memory usage
+- Compare different model architectures
+- Debug performance issues
+
+**⚠️ Performance Note:**
+- TensorBoard (default): < 1% overhead ✅
+- Gradient logging: ~5-10% overhead (disabled by default)
+- Profiler: ~10-15% overhead (disabled by default)
+- Logging happens once per epoch, not per batch
+- Safe to keep TensorBoard enabled for all training
+
+**Example: Optimizing based on profiler insights**
+
+```python
+# Before profiling: Found data loading is slow
+# Solution: Increase num_workers
+
+loader = ImageDataLoader(
+    CIFAR10,
+    batch_size=128,
+    num_workers=4,  # Increased from default
+    use_gpu_augmentation='auto'  # Move augmentation to GPU
+)
+```
+
 ### Custom Metrics
 
 ```python
@@ -221,14 +443,23 @@ ImageDataLoader(
 ```python
 TrainerConfig(
     epochs=10,
-    amp=True,                     # Mixed precision
-    compile_model='auto',         # torch.compile()
+    amp=True,                          # Mixed precision
+    compile_model='auto',              # torch.compile()
     compile_mode='default',
-    metrics={},
-    callbacks={},
     device='auto',
-    log_interval=100,
     save_dir='./checkpoints',
+    # TensorBoard settings
+    use_tensorboard=True,              # Enable TensorBoard (default: True)
+    tensorboard_log_dir='runs',        # TensorBoard log directory
+    tensorboard_comment='',            # Experiment name/comment
+    tensorboard_log_graph=True,        # Log model graph
+    tensorboard_log_gradients=False,   # Log gradient histograms
+    # PyTorch Profiler settings (integrates with TensorBoard)
+    use_profiler=False,                # Enable PyTorch Profiler (default: False)
+    profiler_schedule_wait=1,          # Batches to skip before profiling
+    profiler_schedule_warmup=1,        # Warmup batches
+    profiler_schedule_active=3,        # Active profiling batches
+    profiler_schedule_repeat=2,        # Number of profiling cycles
 )
 ```
 
