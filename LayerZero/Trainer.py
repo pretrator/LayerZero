@@ -223,7 +223,7 @@ class TensorBoardCallback(Callback):
                 print(f"Logging: PyTorch Profiler (Performance Analysis)")
                 print(f"  Schedule: wait={profiler_schedule_wait}, warmup={profiler_schedule_warmup}, active={profiler_schedule_active}, repeat={profiler_schedule_repeat}")
             print("\nTo view in real-time:")
-            print(f"  Colab/Kaggle: %load_ext tensorboard && %tensorboard --logdir={log_dir}")
+            print(f"  Colab/Kaggle: %load_ext tensorboard then %tensorboard --logdir={log_dir}")
             print(f"  Local: tensorboard --logdir={log_dir}")
             print("  Then open: http://localhost:6006")
             if use_profiler:

@@ -119,9 +119,9 @@ results = trainer.fit(
 **View Training in Real-Time:**
 
 ```python
-# Google Colab / Kaggle (inline in notebook):
+# Google Colab / Kaggle (inline in notebook - two separate commands):
 %load_ext tensorboard
-%tensorboard --logdir=runs
+%tensorboard --logdir runs
 ```
 
 ```bash
@@ -210,14 +210,14 @@ config = TrainerConfig(
 #### 🎯 Google Colab / Kaggle Usage (Recommended)
 
 ```python
-# Load TensorBoard extension (run once at top of notebook)
+# Step 1: Load TensorBoard extension (run once at top of notebook)
 %load_ext tensorboard
 
-# Train your model (TensorBoard logs automatically)
+# Step 2: Train your model (TensorBoard logs automatically)
 trainer = Trainer(model, loss_fn, optimizer, config=TrainerConfig(epochs=10))
 trainer.fit(train_loader, val_loader)
 
-# View TensorBoard inline in your notebook
+# Step 3: View TensorBoard inline in your notebook
 %tensorboard --logdir runs
 ```
 
