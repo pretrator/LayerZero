@@ -1,5 +1,5 @@
 # LayerZero/__init__.py
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 
 from .ImageDataLoader import ImageDataLoader
 from .Helper import Helper
