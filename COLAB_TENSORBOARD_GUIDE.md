@@ -45,6 +45,7 @@ trainer.fit(train_loader, val_loader)
 ```python
 # Cell 1: Install and Import
 !pip install LayerZero
+!pip install torch-tb-profiler  # Required for profiler visualization
 %load_ext tensorboard
 
 # Cell 2: Setup
@@ -119,6 +120,16 @@ trainer.fit(train_loader, test_loader, data_loader=loader)
 !ls -la runs/
 ```
 
+### Issue 5: Profiler tab not showing
+```python
+# Install the required plugin
+!pip install torch-tb-profiler
+
+# Restart TensorBoard after installing
+%reload_ext tensorboard
+%tensorboard --logdir runs
+```
+
 ---
 
 ## 📈 What You'll See in TensorBoard
@@ -133,7 +144,8 @@ trainer.fit(train_loader, test_loader, data_loader=loader)
 2. **GRAPHS Tab** (if enabled)
    - Model architecture visualization
 
-3. **PYTORCH_PROFILER Tab** (if profiler enabled)
+3. **PYTORCH_PROFILER or PROFILE Tab** (if profiler enabled)
+   - ⚠️ **Requires:** `pip install torch-tb-profiler`
    - GPU/CPU utilization
    - Memory usage
    - Operation timing
@@ -191,6 +203,12 @@ trainer2.fit(train_loader, val_loader)
 
 ## 🚀 Advanced: Enable Profiler
 
+**Step 1: Install the profiler plugin**
+```python
+!pip install torch-tb-profiler
+```
+
+**Step 2: Enable profiler in config**
 ```python
 # Enable profiler for performance analysis
 config = TrainerConfig(
@@ -200,11 +218,15 @@ config = TrainerConfig(
 
 trainer = Trainer(model, loss_fn, optimizer, config=config)
 trainer.fit(train_loader, val_loader)
-
-# View profiler in TensorBoard
-%tensorboard --logdir runs
-# Click the "PYTORCH_PROFILER" tab
 ```
+
+**Step 3: View profiler in TensorBoard**
+```python
+%tensorboard --logdir runs
+# Look for the "PYTORCH_PROFILER" or "PROFILE" tab
+```
+
+**Note:** Without `torch-tb-profiler`, the profiler tab won't appear in TensorBoard!
 
 ---
 

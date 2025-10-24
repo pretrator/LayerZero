@@ -17,5 +17,6 @@ dependencies = [
     "torchvision",
     "requests",
     "tqdm",
-    "tensorboard"
+    "tensorboard",
+    "torch-tb-profiler"
 ]

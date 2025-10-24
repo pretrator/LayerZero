@@ -227,7 +227,9 @@ class TensorBoardCallback(Callback):
             print(f"  Local: tensorboard --logdir={log_dir}")
             print("  Then open: http://localhost:6006")
             if use_profiler:
-                print("\n  View profiler in the 'PYTORCH_PROFILER' tab")
+                print("\n  📊 View profiler traces in TensorBoard:")
+                print("     - Install: pip install torch-tb-profiler")
+                print("     - Look for 'PYTORCH_PROFILER' or 'PROFILE' tab")
             print("="*60 + "\n")
             
         except ImportError:

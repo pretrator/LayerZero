@@ -49,7 +49,7 @@ Monitoring & Analysis:
 ## Installation
 
 ```bash
-pip install torch torchvision matplotlib tensorboard
+pip install torch torchvision matplotlib tensorboard torch-tb-profiler
 
 # Optional: GPU augmentation
 pip install kornia kornia-rs
@@ -60,6 +60,8 @@ Or install from PyPI:
 ```bash
 pip install LayerZero
 ```
+
+**Note:** `torch-tb-profiler` is required to view PyTorch Profiler traces in TensorBoard.
 
 ---
 
@@ -346,7 +348,7 @@ trainer.fit(train_loader, val_loader)
 
 # View profiler traces in TensorBoard
 %tensorboard --logdir runs
-# Open the "PYTORCH_PROFILER" tab!
+# Look for the "PYTORCH_PROFILER" or "PROFILE" tab (requires torch-tb-profiler)
 ```
 
 **What you'll see:**
@@ -355,6 +357,10 @@ trainer.fit(train_loader, val_loader)
 - ⚡ Operation timing breakdown
 - 🔍 Bottleneck identification (slow ops highlighted)
 - 📈 Kernel execution trace
+
+**Requirements:**
+- `torch-tb-profiler` must be installed: `pip install torch-tb-profiler`
+- The profiler tab will appear after profiling data is generated
 
 **Fine-tune profiler schedule:**
 
