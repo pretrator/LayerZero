@@ -99,7 +99,7 @@ class ImageDataLoader:
                     print("="*60)
                     ensure_kornia(auto_install=True, verbose=True)
                 
-                self.use_gpu_augmentation = is_kornia_available() && config.augmentation_mode != AugmentationMode.OFF
+                self.use_gpu_augmentation = is_kornia_available() and config.augmentation_mode != AugmentationMode.OFF
                 
                 if self.use_gpu_augmentation:
                     print("\n" + "="*60)
