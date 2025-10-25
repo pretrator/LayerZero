@@ -90,16 +90,32 @@ class ImageDataLoader:
         # Handle GPU augmentation (separate from augmentation intensity)
         cfg_use_gpu_aug = config.use_gpu_augmentation if config else 'auto'
         cfg_auto_install_kornia = config.auto_install_kornia if config else True
+        
+        # Always try to install Kornia if auto-install is enabled (even if mode is OFF)
+        if cfg_auto_install_kornia and not is_kornia_available():
+            try:
+                print("\n" + "="*60)
+                print("🚀 Setting up GPU-accelerated augmentation capabilities...")
+                print("="*60)
+                ensure_kornia(auto_install=True, verbose=True)
+            except Exception as e:
+                if self.augmentation_mode != AugmentationMode.OFF:
+                    raise ImportError("Failed to install Kornia. Please install manually: pip install kornia kornia-rs") from e
+                print(f"⚠️  Note: Kornia installation failed but augmentation mode is OFF, continuing without it")
+        
+        # When augmentation mode is OFF, force GPU augmentation off
+        if self.augmentation_mode == AugmentationMode.OFF:
+            self.use_gpu_augmentation = False
+            print(f"\nℹ️  Augmentation mode is OFF. No augmentations will be applied.")
+            return
+            
+        # Auto-detect GPU augmentation if available
         if cfg_use_gpu_aug == 'auto':
-            # Auto-detect: Use GPU if available and Kornia can be installed
+            # Auto-detect: Use GPU if available and Kornia is installed
             if torch.cuda.is_available():
-                if not is_kornia_available() and cfg_auto_install_kornia:
-                    print("\n" + "="*60)
-                    print("🚀 GPU DETECTED! Setting up GPU-accelerated augmentation...")
-                    print("="*60)
-                    ensure_kornia(auto_install=True, verbose=True)
+                self.use_gpu_augmentation = is_kornia_available()
                 
-                self.use_gpu_augmentation = is_kornia_available() and cfg_aug_mode != AugmentationMode.OFF
+                self.use_gpu_augmentation = is_kornia_available()
                 
                 if self.use_gpu_augmentation:
                     print("\n" + "="*60)

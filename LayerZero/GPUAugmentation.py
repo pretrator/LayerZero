@@ -23,7 +23,7 @@ Usage:
 import torch
 import torch.nn as nn
 from .AugmentationMode import AugmentationMode
-from .KorniaHelper import is_kornia_available
+from .KorniaHelper import is_kornia_available, ensure_kornia
 
 
 class GPUAugmentation(nn.Module):
@@ -55,19 +55,29 @@ class GPUAugmentation(nn.Module):
     ):
         super().__init__()
         
-        if not is_kornia_available():
-            raise ImportError(
-                "Kornia not installed. Install with: pip install kornia kornia-rs"
-            )
-        
-        # Import Kornia here (after check passes)
-        import kornia.augmentation as K
-        
         self.image_size = image_size
         self.mode = mode
         self.device = device
         self.channels = channels  # Will be auto-detected on first forward pass if None
-        self.K = K  # Store for later use
+        
+        # Always try to install Kornia, even if mode is OFF (user might switch modes later)
+        try:
+            if not is_kornia_available():
+                print("\n📦 Installing Kornia...")
+                ensure_kornia(auto_install=True, verbose=True)
+            
+            # Import Kornia (will be used if mode is not OFF)
+            import kornia.augmentation as K
+            self.K = K
+        except Exception as e:
+            if mode != AugmentationMode.OFF:
+                raise ImportError(
+                    "Failed to install/import Kornia. Install manually with: pip install kornia kornia-rs"
+                ) from e
+            else:
+                print(f"⚠️  Note: Kornia installation failed but augmentation mode is OFF, continuing without it")
+                self.K = None
+        
         self.transforms = None  # Will be initialized on first forward pass
         self._initialized = False
         
@@ -127,6 +137,10 @@ class GPUAugmentation(nn.Module):
         Returns:
             torch.Tensor: Augmented images [B, C, H, W]
         """
+        # When mode is OFF, bypass everything and return input as is
+        if self.mode == AugmentationMode.OFF:
+            return x
+            
         # Auto-detect channels on first forward pass
         if not self._initialized:
             if self.channels is None:
