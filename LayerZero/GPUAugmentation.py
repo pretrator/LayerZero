@@ -142,7 +142,8 @@ class GPUAugmentation(nn.Module):
             augs.extend([
                 self.K.RandomRotation(degrees=10.0, p=0.3),
                 self.K.RandomGaussianBlur((3, 3), (0.1, 2.0), p=0.2),
-                self.K.RandomErasing(p=0.25, scale=(0.02, 0.33), ratio=(0.3, 3.3)),
+                # Explicitly cast scale and ratio to float to avoid Kornia dtype issues
+                self.K.RandomErasing(p=0.25, scale=(float(0.02), float(0.33)), ratio=(float(0.3), float(3.3))),
             ])
         
         # Create augmentation container and move to device
