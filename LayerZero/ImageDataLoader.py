@@ -271,11 +271,22 @@ class ImageDataLoader:
         
         try:
             from .GPUAugmentation import GPUAugmentation
+            # Handle image size parameters for GPU augmentation
+            if self.image_size is None:
+                raise ValueError("Image size (image_size) [height, width] or number must be specified when using GPU augmentation")
+            
+            if isinstance(self.image_size, (tuple, list)):
+                height, width = self.image_size
+            else:
+                # Square image
+                height = width = self.image_size
+                
             return GPUAugmentation(
-                image_size=self.image_size,
-                mode=self.augmentation_mode,  # Use same mode
+                width=width,
+                height=height,
+                mode=self.augmentation_mode,
                 device=device,
-                channels=self.channels  # Pass channels to avoid runtime detection
+                channels=self.channels
             )
         except ImportError as e:
             print(f"⚠️  Could not import GPUAugmentation: {e}")

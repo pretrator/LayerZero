@@ -38,16 +38,22 @@ class GPUAugmentation(nn.Module):
     - Auto-detects grayscale vs RGB (skips color augs for grayscale)
     
     Args:
-        image_size (int): Target image size
+        width (int): Target width for the output images
+        height (int): Target height for the output images
         mode (AugmentationMode): OFF, MINIMAL, BASIC, or STRONG
         device (str): 'cuda' or 'cpu'
         p (float): Probability of applying augmentations
         channels (int, optional): Number of channels (1=grayscale, 3=RGB). Auto-detected if None.
+        
+    Note:
+        Both width and height must be positive integers.
+        The dimensions should be provided by the ImageDataLoader or other calling code.
     """
     
     def __init__(
         self,
-        image_size=224,
+        width: int,
+        height: int,
         mode=AugmentationMode.BASIC,
         device='cuda',
         p=0.5,
@@ -55,7 +61,13 @@ class GPUAugmentation(nn.Module):
     ):
         super().__init__()
         
-        self.image_size = image_size
+        if not isinstance(width, int) or not isinstance(height, int):
+            raise ValueError("Width and height must be integers")
+        if width <= 0 or height <= 0:
+            raise ValueError("Width and height must be positive")
+            
+        self.width = width
+        self.height = height
         self.mode = mode
         self.device = device
         self.channels = channels  # Will be auto-detected on first forward pass if None
@@ -94,13 +106,13 @@ class GPUAugmentation(nn.Module):
             # MINIMAL: Fast augmentations only (geometry only, no color)
             augs = [
                 self.K.RandomHorizontalFlip(p=0.5),
-                self.K.RandomCrop((self.image_size, self.image_size), pad_if_needed=True),
+                self.K.RandomCrop((self.height, self.width), pad_if_needed=True),
             ]
             
         elif self.mode == AugmentationMode.BASIC:
             # BASIC: Standard augmentations
             augs = [
-                self.K.RandomResizedCrop((self.image_size, self.image_size), scale=(0.2, 1.0), ratio=(0.75, 1.33), p=1.0),
+                self.K.RandomResizedCrop((self.height, self.width), scale=(0.2, 1.0), ratio=(0.75, 1.33), p=1.0),
                 self.K.RandomHorizontalFlip(p=0.5),
             ]
             # Only add color augmentations for RGB images
@@ -110,7 +122,7 @@ class GPUAugmentation(nn.Module):
         elif self.mode == AugmentationMode.STRONG:
             # STRONG: Maximum augmentation strength
             augs = [
-                self.K.RandomResizedCrop((self.image_size, self.image_size), scale=(0.08, 1.0), ratio=(0.75, 1.33), p=1.0),
+                self.K.RandomResizedCrop((self.height, self.width), scale=(0.08, 1.0), ratio=(0.75, 1.33), p=1.0),
                 self.K.RandomHorizontalFlip(p=0.5),
             ]
             # Only add color augmentations for RGB images
@@ -171,79 +183,13 @@ class HybridAugmentation(nn.Module):
     Result: Best performance, especially on multi-worker DataLoaders
     """
     
-    def __init__(self, image_size=224, mode='standard', device='cuda'):
+    def __init__(self, width: int, height: int, mode='standard', device='cuda'):
         super().__init__()
-        self.gpu_aug = GPUAugmentation(image_size, mode, device)
+        self.gpu_aug = GPUAugmentation(width=width, height=height, mode=mode, device=device)
     
     def forward(self, x):
         """Apply GPU augmentations to batch"""
         return self.gpu_aug(x)
-
-
-def benchmark_augmentation_speed():
-    """
-    Benchmark CPU vs GPU augmentation speed.
-    
-    Returns:
-        dict: Timing results for CPU and GPU augmentations
-    """
-    if not is_kornia_available():
-        print("Kornia not available. Install with: pip install kornia")
-        return {}
-    
-    import time
-    from torchvision import transforms as T
-    
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    batch_size = 128
-    image_size = 224
-    num_iterations = 50
-    
-    # Create dummy batch
-    batch = torch.randn(batch_size, 3, image_size, image_size)
-    
-    results = {}
-    
-    # Test CPU augmentations (torchvision)
-    cpu_transforms = T.Compose([
-        T.RandomResizedCrop(image_size),
-        T.RandomHorizontalFlip(),
-        T.ColorJitter(0.4, 0.4, 0.4, 0.1),
-        T.RandomRotation(10),
-    ])
-    
-    print(f"Benchmarking CPU augmentations on {device}...")
-    start = time.time()
-    for _ in range(num_iterations):
-        for i in range(batch_size):
-            # Torchvision works per-image
-            _ = cpu_transforms(batch[i])
-    cpu_time = time.time() - start
-    results['cpu'] = cpu_time
-    print(f"CPU time: {cpu_time:.3f}s")
-    
-    # Test GPU augmentations (Kornia)
-    if device == 'cuda':
-        gpu_aug = GPUAugmentation(image_size, mode='standard', device=device)
-        batch_gpu = batch.to(device)
-        
-        print(f"Benchmarking GPU augmentations...")
-        torch.cuda.synchronize()
-        start = time.time()
-        for _ in range(num_iterations):
-            # Kornia works on entire batch
-            _ = gpu_aug(batch_gpu)
-        torch.cuda.synchronize()
-        gpu_time = time.time() - start
-        results['gpu'] = gpu_time
-        results['speedup'] = cpu_time / gpu_time
-        
-        print(f"GPU time: {gpu_time:.3f}s")
-        print(f"Speedup: {results['speedup']:.2f}x faster")
-    else:
-        print("GPU not available, skipping GPU benchmark")
-    
-    return results
 
 
 # Example integration with Trainer
@@ -252,7 +198,7 @@ class AugmentedTrainingLoop:
     Example of how to integrate GPU augmentations into training.
     
     Usage:
-        gpu_aug = GPUAugmentation(224, mode='standard', device='cuda')
+        gpu_aug = GPUAugmentation(width=224, height=224, mode=AugmentationMode.BASIC, device='cuda')
         
         for X, y in dataloader:
             X = X.to(device)
