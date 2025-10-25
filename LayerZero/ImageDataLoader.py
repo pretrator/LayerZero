@@ -17,12 +17,6 @@ class ImageLoaderConfig:
     download: bool = True
     mean: Optional[Tuple[float, ...]] = None
     std: Optional[Tuple[float, ...]] = None
-    use_trivialaugment: bool = True
-    use_randaugment: bool = False
-    rand_n: int = 2
-    rand_m: int = 9
-    color_jitter: Optional[Tuple[float, float, float, float]] = (0.4, 0.4, 0.4, 0.1)
-    random_erase_p: float = 0.25
     persistent_workers: Optional[bool] = None
     prefetch_factor: int = 2
     augmentation_mode: AugmentationMode = AugmentationMode.BASIC
@@ -34,17 +28,13 @@ class ImageDataLoader:
     def __init__(
         self,
         dataset_cls,
-        image_size: Union[int, Tuple[int, int]],
+        image_size: Optional[Union[int, Tuple[int, int]]] = None,
         config: Optional[ImageLoaderConfig] = None,
     ):
         if dataset_cls is None:
             raise ValueError("Dataset Class (dataset_cls) is not provided")
             
-        # Validate image_size
-        if image_size is None:
-            raise ValueError("Image size must be provided")
-            
-        self.image_size = self._validate_image_size(image_size)
+        self.image_size = self._validate_image_size(image_size) if image_size is not None else None
             
         self.dataset_cls = dataset_cls
         self.data_dir = (config.data_dir if config else "data")
@@ -159,12 +149,7 @@ class ImageDataLoader:
                 print(f"\nℹ️  GPU augmentation disabled. Using CPU augmentation.")
                 print(f"   Mode: {self.augmentation_mode.name} ({self.augmentation_mode.description})\n")
         
-        self.use_trivialaugment = (config.use_trivialaugment if config else True)
-        self.use_randaugment = (config.use_randaugment if config else False)
-        self.rand_n = (config.rand_n if config else 2)
-        self.rand_m = (config.rand_m if config else 9)
-        self.color_jitter = (config.color_jitter if config else (0.4, 0.4, 0.4, 0.1))
-        self.random_erase_p = (config.random_erase_p if config else 0.25)
+        # All augmentation parameters are now handled directly in build_transforms
 
     def build_transforms(self, train: bool = True, extra_ops: Optional[List[Callable]] = None):
         """
@@ -174,71 +159,66 @@ class ImageDataLoader:
         - OFF: No augmentation (ToTensor, Normalize only)
         - MINIMAL: RandomCrop, RandomHorizontalFlip
         - BASIC: + ColorJitter (50% prob)
-        - STRONG: + Rotation, RandAugment/TrivialAugment, RandomErasing
-        
-        Note: If use_gpu_augmentation=True, CPU transforms are minimal and
-              heavy augmentations are applied on GPU via GPUAugmentation.
+        - STRONG: + Rotation, RandomErasing
         """
         ops: List[Callable] = list(extra_ops) if extra_ops else []
         
+        # Training mode transforms
         if train:
+            # OFF mode - no augmentations
             if self.augmentation_mode == AugmentationMode.OFF:
                 pass
+            
+            # MINIMAL mode
             elif self.augmentation_mode == AugmentationMode.MINIMAL:
-                # MINIMAL: Only fast augmentations
-                # Scale both dimensions by 1.14 for resize
-                resize_size = tuple(int(dim * 1.14) for dim in self.image_size)
-                ops.append(transforms.Resize(resize_size))
-                ops.append(transforms.RandomCrop(self.image_size))
                 ops.append(transforms.RandomHorizontalFlip(p=0.5))
-                
+                if self.image_size:
+                    resize_size = tuple(int(dim * 1.14) for dim in self.image_size)
+                    ops.append(transforms.Resize(resize_size))
+                    ops.append(transforms.RandomCrop(self.image_size))
+            
+            # BASIC mode
             elif self.augmentation_mode == AugmentationMode.BASIC:
-                # BASIC: Standard augmentations for production
-                # Calculate aspect ratio range based on input dimensions
-                base_ratio = self.image_size[0] / self.image_size[1]
-                ratio = (base_ratio * 0.75, base_ratio * 1.33)  # Allow 25% deviation
-                ops.append(transforms.RandomResizedCrop(self.image_size, scale=(0.2, 1.0), ratio=ratio))
                 ops.append(transforms.RandomHorizontalFlip(p=0.5))
-                if self.color_jitter:
-                    ops.append(transforms.RandomApply([transforms.ColorJitter(*self.color_jitter)], p=0.5))
+                ops.append(transforms.RandomApply(
+                    [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)],
+                    p=0.5
+                ))
                 
+                if self.image_size:
+                    base_ratio = self.image_size[0] / self.image_size[1]
+                    ratio = (base_ratio * 0.75, base_ratio * 1.33)
+                    ops.append(transforms.RandomResizedCrop(
+                        self.image_size,
+                        scale=(0.2, 1.0),
+                        ratio=ratio
+                    ))
+            
+            # STRONG mode
             elif self.augmentation_mode == AugmentationMode.STRONG:
-                # STRONG: Maximum augmentations for research/accuracy
-                # Calculate aspect ratio range based on input dimensions
-                base_ratio = self.image_size[0] / self.image_size[1]
-                ratio = (base_ratio * 0.75, base_ratio * 1.33)  # Allow 25% deviation
-                ops.append(transforms.RandomResizedCrop(self.image_size, scale=(0.08, 1.0), ratio=ratio))
                 ops.append(transforms.RandomHorizontalFlip(p=0.5))
-                if self.color_jitter:
-                    ops.append(transforms.RandomApply([transforms.ColorJitter(*self.color_jitter)], p=0.8))
+                ops.append(transforms.RandomApply(
+                    [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)],
+                    p=0.8
+                ))
                 ops.append(transforms.RandomRotation(degrees=10))
                 
-                # Add advanced augmentations
-                if self.use_trivialaugment:
-                    try:
-                        ops.append(transforms.TrivialAugmentWide())
-                    except AttributeError:
-                        ops.append(transforms.RandAugment(num_ops=self.rand_n, magnitude=self.rand_m))
-                elif self.use_randaugment:
-                    ops.append(transforms.RandAugment(num_ops=self.rand_n, magnitude=self.rand_m))
-                
-                # RandomErasing
-                if self.random_erase_p > 0:
-                    # Apply before ToTensor if needed, or after - we'll do after
-                    pass  # Will be added after ToTensor below
-        else:
-            # Validation/test transforms (same for all modes)
-            # Scale both dimensions by 1.14 for resize
-            resize_size = tuple(int(dim * 1.14) for dim in self.image_size)
-            ops.append(transforms.Resize(resize_size))
-            ops.append(transforms.CenterCrop(self.image_size))
-            
+                if self.image_size:
+                    base_ratio = self.image_size[0] / self.image_size[1]
+                    ratio = (base_ratio * 0.75, base_ratio * 1.33)
+                    ops.append(transforms.RandomResizedCrop(
+                        self.image_size,
+                        scale=(0.08, 1.0),
+                        ratio=ratio
+                    ))
+        
+        # Always add ToTensor and Normalize
         ops.append(transforms.ToTensor())
         ops.append(transforms.Normalize(self.mean, self.std))
         
-        # RandomErasing only in STRONG mode (applied after ToTensor)
-        if train and self.random_erase_p > 0 and self.augmentation_mode == AugmentationMode.STRONG:
-            ops.append(transforms.RandomErasing(p=self.random_erase_p, scale=(0.02, 0.33), ratio=(0.3, 3.3)))
+        # Add RandomErasing for STRONG mode in training
+        if train and self.augmentation_mode == AugmentationMode.STRONG:
+            ops.append(transforms.RandomErasing(p=0.25, scale=(0.02, 0.33), ratio=(0.3, 3.3)))
             
         return transforms.Compose(ops)
 
@@ -367,15 +347,15 @@ class ImageDataLoader:
         return train_loader, test_loader
 
     @staticmethod
-    def _validate_image_size(size: Union[int, Tuple[int, int], List[int]]) -> Tuple[int, int]:
+    def _validate_image_size(size: Optional[Union[int, Tuple[int, int], List[int]]]) -> Optional[Tuple[int, int]]:
         """
         Validate and normalize image size input.
         
         Args:
-            size: Integer for square images or tuple/list of (height, width)
+            size: Integer for square images or tuple/list of (height, width), or None to keep original size
             
         Returns:
-            Tuple[int, int]: Validated (height, width)
+            Optional[Tuple[int, int]]: Validated (height, width) or None if no resizing needed
             
         Raises:
             ValueError: If size is invalid
@@ -407,15 +387,26 @@ class ImageDataLoader:
         
         Returns:
             dict: Contains:
-                - height (int): Image height
-                - width (int): Image width
-                - aspect_ratio (float): Width/Height ratio
-                - is_square (bool): Whether the image is square
+                - height (Optional[int]): Image height if size is set, None otherwise
+                - width (Optional[int]): Image width if size is set, None otherwise
+                - aspect_ratio (Optional[float]): Width/Height ratio if size is set, None otherwise
+                - is_square (Optional[bool]): Whether the image is square if size is set, None otherwise
+                - is_original_size (bool): Whether original image size is preserved
         """
+        if self.image_size is None:
+            return {
+                'height': None,
+                'width': None,
+                'aspect_ratio': None,
+                'is_square': None,
+                'is_original_size': True
+            }
+            
         height, width = self.image_size
         return {
             'height': height,
             'width': width,
             'aspect_ratio': width / height,
-            'is_square': height == width
+            'is_square': height == width,
+            'is_original_size': False
         }

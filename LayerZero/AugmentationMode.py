@@ -23,7 +23,7 @@ class AugmentationMode(Enum):
                → Speed: 2-3x slower than MINIMAL
                → Quality: -0.5 to -1% accuracy
         
-        STRONG: Heavy augmentations (Crop, Flip, ColorJitter, Rotation, RandAugment)
+        STRONG: Heavy augmentations (Crop, Flip, ColorJitter, Rotation, RandomErasing)
                 → Best for: Research, maximum accuracy
                 → Speed: 5-8x slower than MINIMAL
                 → Quality: Best (baseline)
@@ -34,7 +34,7 @@ class AugmentationMode(Enum):
     OFF = auto()       # No augmentation
     MINIMAL = auto()   # Fast: RandomCrop, RandomHorizontalFlip only
     BASIC = auto()     # Balanced: + ColorJitter (reduced probability)
-    STRONG = auto()    # Quality: + Rotation, RandAugment/TrivialAugment, RandomErasing
+    STRONG = auto()    # Quality: + Rotation, RandomErasing
     
     def __str__(self):
         return self.name.lower()
