@@ -58,6 +58,8 @@ class GPUAugmentation(nn.Module):
         device='cuda',
         p=0.5,
         channels=None,  # Auto-detect if None
+        mean=None,  # Normalization mean (applied on GPU)
+        std=None,   # Normalization std (applied on GPU)
     ):
         super().__init__()
         
@@ -72,6 +74,10 @@ class GPUAugmentation(nn.Module):
         self.device = device
         self.channels = channels  # Will be auto-detected on first forward pass if None
         
+        # Store normalization parameters (will be applied on GPU after augmentation)
+        self.mean = mean
+        self.std = std
+        
         # Always try to install Kornia, even if mode is OFF (user might switch modes later)
         try:
             if not is_kornia_available():
@@ -80,7 +86,9 @@ class GPUAugmentation(nn.Module):
             
             # Import Kornia (will be used if mode is not OFF)
             import kornia.augmentation as K
+            import kornia.enhance as KE
             self.K = K
+            self.KE = KE
         except Exception as e:
             if mode != AugmentationMode.OFF:
                 raise ImportError(
@@ -89,8 +97,10 @@ class GPUAugmentation(nn.Module):
             else:
                 print(f"⚠️  Note: Kornia installation failed but augmentation mode is OFF, continuing without it")
                 self.K = None
+                self.KE = None
         
         self.transforms = None  # Will be initialized on first forward pass
+        self.normalize = None   # Will be initialized if mean/std provided
         self._initialized = False
         
     def _build_transforms(self, channels):
@@ -135,37 +145,107 @@ class GPUAugmentation(nn.Module):
                 self.K.RandomErasing(p=0.25, scale=(0.02, 0.33), ratio=(0.3, 3.3)),
             ])
         
-        # Create augmentation container
+        # Create augmentation container and move to device
         transforms = self.K.AugmentationSequential(*augs, data_keys=["input"])
-        return transforms.to(self.device)
+        transforms = transforms.to(self.device)
+        
+        # Verify transforms are on correct device
+        if self.device == 'cuda':
+            # Check if Kornia operations are properly on CUDA
+            for module in transforms.children():
+                if hasattr(module, 'to'):
+                    try:
+                        # Ensure each submodule is on CUDA
+                        module.to(self.device)
+                    except Exception:
+                        pass
+        
+        return transforms
     
     def forward(self, x):
         """
         Apply augmentations to a batch of images.
         
         Args:
-            x (torch.Tensor): Batch of images [B, C, H, W]
+            x (torch.Tensor): Batch of images [B, C, H, W] in range [0, 1]
             
         Returns:
-            torch.Tensor: Augmented images [B, C, H, W]
+            torch.Tensor: Augmented and normalized images [B, C, H, W]
         """
-        # When mode is OFF, bypass everything and return input as is
+        # Verify input is on correct device (critical for performance)
+        if self.device == 'cuda' and not x.is_cuda:
+            raise ValueError(
+                f"❌ GPU Augmentation Error: Expected input on CUDA but got {x.device}. "
+                f"Move tensor to GPU first: X = X.to('cuda')"
+            )
+        
+        # When mode is OFF, only apply normalization if specified
         if self.mode == AugmentationMode.OFF:
+            if self.mean is not None and self.std is not None:
+                return self._normalize(x)
             return x
             
-        # Auto-detect channels on first forward pass
+        # Auto-detect channels and initialize on first forward pass
         if not self._initialized:
             if self.channels is None:
                 self.channels = x.shape[1]  # Detect from input
+            
+            # Build and move transforms to device
             self.transforms = self._build_transforms(self.channels)
+            
+            # Build normalization if mean/std provided
+            if self.mean is not None and self.std is not None:
+                self.normalize = self._build_normalize()
+            
             self._initialized = True
             
             # Log what's being used
             aug_type = "Grayscale" if self.channels == 1 else "RGB"
-            print(f"🎨 GPU Aug: {aug_type} ({self.mode.name}) | {len(self.transforms)} transforms")
+            normalize_info = " + Normalize" if self.normalize is not None else ""
+            print(f"🎨 GPU Aug: {aug_type} ({self.mode.name}) | {len(self.transforms)} transforms{normalize_info}")
+            
+            # Verify GPU execution for CUDA device
+            if self.device == 'cuda':
+                print(f"   ✓ GPU acceleration verified on {x.device}")
         
-        # Kornia expects input in range [0, 1]
-        return self.transforms(x)
+        # Apply augmentations (Kornia expects input in range [0, 1])
+        x = self.transforms(x)
+        
+        # Apply normalization on GPU if specified (more efficient than CPU normalization)
+        if self.normalize is not None:
+            x = self.normalize(x)
+        
+        return x
+    
+    def _build_normalize(self):
+        """Build GPU-based normalization transform."""
+        import torch
+        
+        # Convert mean/std to tensors on correct device
+        if isinstance(self.mean, (list, tuple)):
+            mean = torch.tensor(self.mean, device=self.device).view(-1, 1, 1)
+        else:
+            mean = torch.tensor([self.mean], device=self.device).view(-1, 1, 1)
+            
+        if isinstance(self.std, (list, tuple)):
+            std = torch.tensor(self.std, device=self.device).view(-1, 1, 1)
+        else:
+            std = torch.tensor([self.std], device=self.device).view(-1, 1, 1)
+        
+        # Return normalization function
+        def normalize(x):
+            return (x - mean) / std
+        
+        return normalize
+    
+    def _normalize(self, x):
+        """Apply normalization to input tensor."""
+        if self.normalize is None and self.mean is not None:
+            self.normalize = self._build_normalize()
+        
+        if self.normalize is not None:
+            return self.normalize(x)
+        return x
     
     def __repr__(self):
         num_transforms = len(self.transforms) if self._initialized else "auto"

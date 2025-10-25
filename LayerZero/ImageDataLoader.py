@@ -115,8 +115,6 @@ class ImageDataLoader:
             if torch.cuda.is_available():
                 self.use_gpu_augmentation = is_kornia_available()
                 
-                self.use_gpu_augmentation = is_kornia_available()
-                
                 if self.use_gpu_augmentation:
                     print("\n" + "="*60)
                     print("⚡ GPU AUGMENTATION ENABLED ⚡")
@@ -171,6 +169,13 @@ class ImageDataLoader:
         """
         Build transform pipeline based on augmentation_mode.
         
+        When use_gpu_augmentation=True:
+        - Only applies ToTensor + Normalize (minimal CPU work)
+        - All augmentations are deferred to GPU (Kornia)
+        
+        When use_gpu_augmentation=False:
+        - Applies full CPU augmentation pipeline (torchvision)
+        
         Augmentation intensity (CPU or GPU):
         - OFF: No augmentation (ToTensor, Normalize only)
         - MINIMAL: RandomCrop, RandomHorizontalFlip
@@ -179,8 +184,9 @@ class ImageDataLoader:
         """
         ops: List[Callable] = list(extra_ops) if extra_ops else []
         
-        # Training mode transforms
-        if train:
+        # Only apply CPU augmentations if GPU augmentation is disabled
+        # This prevents double augmentation (CPU + GPU)
+        if train and not self.use_gpu_augmentation:
             # OFF mode - no augmentations
             if self.augmentation_mode == AugmentationMode.OFF:
                 pass
@@ -228,12 +234,16 @@ class ImageDataLoader:
                         ratio=ratio
                     ))
         
-        # Always add ToTensor and Normalize
+        # Always add ToTensor (required to convert PIL/numpy to tensor)
         ops.append(transforms.ToTensor())
-        ops.append(transforms.Normalize(self.mean, self.std))
         
-        # Add RandomErasing for STRONG mode in training
-        if train and self.augmentation_mode == AugmentationMode.STRONG:
+        # When GPU augmentation is enabled, skip CPU normalization
+        # Normalization will be done on GPU after augmentation for efficiency
+        if not self.use_gpu_augmentation:
+            ops.append(transforms.Normalize(self.mean, self.std))
+        
+        # Add RandomErasing for STRONG mode in training (CPU-only)
+        if train and not self.use_gpu_augmentation and self.augmentation_mode == AugmentationMode.STRONG:
             ops.append(transforms.RandomErasing(p=0.25, scale=(0.02, 0.33), ratio=(0.3, 3.3)))
             
         return transforms.Compose(ops)
@@ -286,7 +296,9 @@ class ImageDataLoader:
                 height=height,
                 mode=self.augmentation_mode,
                 device=device,
-                channels=self.channels
+                channels=self.channels,
+                mean=self.mean,  # Pass normalization to GPU
+                std=self.std     # More efficient than CPU normalization
             )
         except ImportError as e:
             print(f"⚠️  Could not import GPUAugmentation: {e}")
