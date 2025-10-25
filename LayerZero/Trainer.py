@@ -21,8 +21,9 @@ Notes:
 from __future__ import annotations
 from .Helper import Helper
 import os
+import math
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import torch
 from torch import nn, optim
 from torch.utils.data import DataLoader
@@ -73,7 +74,8 @@ class TrainerConfig:
     monitor: str = "val_accuracy"  # metric to monitor for best model
     monitor_mode: str = "max"  # 'max' or 'min'
     early_stopping_patience: Optional[int] = None
-    scheduler: Optional[optim.lr_scheduler._LRScheduler] = None
+    scheduler: Optional[Any] = None  # Allow any scheduler type or callable
+    scheduler_step_per_batch: bool = False  # Step scheduler per batch (required for OneCycleLR)
     initial_lr: Optional[float] = None
     print_every: int = 1
     seed: Optional[int] = 42
@@ -347,21 +349,74 @@ class TensorBoardCallback(Callback):
         # Flush to disk
         self.writer.flush()
     
-    def __del__(self):
-        """Close writer and profiler on cleanup"""
-        # Close profiler first
+    def _cleanup_profiler(self):
+        """Safely cleanup profiler resources"""
         if hasattr(self, 'profiler') and self.profiler is not None:
             try:
                 self.profiler.__exit__(None, None, None)
-            except Exception:
-                pass
-        
-        # Close writer
+                print("\n✅ Profiler data saved successfully\n")
+            except Exception as e:
+                print(f"\n⚠️  Error closing profiler: {e}\n")
+            finally:
+                self.profiler = None
+
+    def _cleanup_writer(self):
+        """Safely cleanup writer resources"""
         if hasattr(self, 'writer') and self.writer is not None:
             try:
+                self.writer.flush()  # Ensure all data is written
                 self.writer.close()
+            except Exception as e:
+                print(f"\n⚠️  Error closing writer: {e}\n")
+            finally:
+                self.writer = None
+
+    def on_epoch_end(self, trainer: "Trainer", epoch: int, logs: Dict[str, Any]):
+        """Log metrics, losses, and learning rate at epoch end"""
+        if self.writer is None:
+            return
+        
+        # Log all metrics and losses
+        for key, value in logs.items():
+            if isinstance(value, (int, float)):
+                # Separate train and val metrics
+                if key.startswith("train_"):
+                    metric_name = key.replace("train_", "")
+                    self.writer.add_scalar(f"Train/{metric_name}", value, epoch)
+                elif key.startswith("val_"):
+                    metric_name = key.replace("val_", "")
+                    self.writer.add_scalar(f"Validation/{metric_name}", value, epoch)
+                else:
+                    self.writer.add_scalar(f"Metrics/{key}", value, epoch)
+        
+        # Log learning rate
+        try:
+            current_lr = trainer.optimizer.param_groups[0]['lr']
+            self.writer.add_scalar("Learning_Rate/lr", current_lr, epoch)
+        except (AttributeError, IndexError, KeyError):
+            pass
+        
+        # Log gradient histograms (if enabled)
+        if self.log_gradients:
+            try:
+                for name, param in trainer.model.named_parameters():
+                    if param.grad is not None:
+                        self.writer.add_histogram(f"Gradients/{name}", param.grad, epoch)
+                        self.writer.add_histogram(f"Weights/{name}", param, epoch)
             except Exception:
-                pass
+                pass  # Gradient logging is optional
+        
+        # Cleanup profiler if training is done
+        if epoch == trainer.config.epochs:
+            self._cleanup_profiler()
+        
+        # Flush to disk
+        self.writer.flush()
+
+    def __del__(self):
+        """Cleanup resources on deletion"""
+        self._cleanup_profiler()
+        self._cleanup_writer()
 
 
 class Trainer:
@@ -375,7 +430,11 @@ class Trainer:
         callbacks: Optional[List[Callback]] = None,
     ):
         self.config = config
-        self.metrics = metrics or {}
+        # Wrap all metrics to handle different input signatures
+        self.metrics = {
+            name: self._wrap_metric(name, fn) 
+            for name, fn in (metrics or {}).items()
+        }
         self.callbacks = callbacks or []
         self.helper = Helper()
         self.gpu_augmentation = None  # Detected lazily in fit()
@@ -412,14 +471,21 @@ class Trainer:
         amp_enabled = config.amp and self.device.type == "cuda"
         self.scaler = torch.cuda.amp.GradScaler(enabled=amp_enabled)
         
+        # Get device info for display
+        device_name = self.device.type.upper()
+        if self.device.type == "cuda" and torch.cuda.device_count() > 0:
+            try:
+                device_name = torch.cuda.get_device_name(0)
+            except Exception:
+                pass  # Fall back to "CUDA" if device name unavailable
+        
         # Print AMP status
-        device_name = torch.cuda.get_device_name(0) if torch.cuda.device_count() > 0 else "CUDA"
         if amp_enabled:
             print(f"\n⚡ AMP (FP16): {device_name} | 2-3x faster, 50% less memory\n")
         elif self.device.type == "cuda" and not config.amp:
-            print(f"\nℹ️  AMP disabled | Enable for 2-3x speedup: TrainerConfig(amp=True)\n")
+            print(f"\nℹ️  AMP disabled on {device_name} | Enable for 2-3x speedup: TrainerConfig(amp=True)\n")
         else:
-            print(f"\nℹ️  Training on {self.device.type.upper()}")
+            print(f"\nℹ️  Training on {device_name}")
             if self.device.type == "cpu":
                 print("   (AMP not available on CPU)\n")
             else:
@@ -428,6 +494,115 @@ class Trainer:
         os.makedirs(self.config.save_dir, exist_ok=True)
         self._best_metric = None
         self._history: List[Dict[str, Any]] = []
+
+    def _calculate_steps_per_epoch(self, dataloader: DataLoader) -> int:
+        """
+        Calculate steps per epoch accounting for batch size and gradient accumulation.
+        
+        Args:
+            dataloader: Training DataLoader
+            
+        Returns:
+            Number of optimizer steps per epoch
+        """
+        # Get total dataset size
+        try:
+            dataset_size = len(dataloader.dataset)
+        except (TypeError, AttributeError):
+            # Handle datasets without __len__ (e.g. IterableDataset)
+            try:
+                dataset_size = dataloader.dataset.total_size  # Custom attribute some use
+            except AttributeError:
+                # Fallback: estimate from batches * batch_size
+                dataset_size = len(dataloader) * dataloader.batch_size
+        
+        # Calculate effective batch size
+        batch_size = dataloader.batch_size or 1  # Default to 1 if None
+        grad_accum = self.config.grad_accum_steps
+        effective_batch_size = batch_size * grad_accum
+        
+        # Calculate steps per epoch (ceil to handle uneven division)
+        return math.ceil(dataset_size / effective_batch_size)
+
+    def _is_batch_scheduler(self, scheduler: Any) -> bool:
+        """Check if scheduler requires per-batch stepping (e.g. OneCycleLR)"""
+        from torch.optim.lr_scheduler import OneCycleLR
+        # Add other batch-level schedulers here if desired
+        return isinstance(scheduler, OneCycleLR)
+        
+    def _configure_scheduler(self, train_loader: DataLoader) -> None:
+        """
+        Configure scheduler with correct steps_per_epoch if needed.
+        
+        Args:
+            train_loader: Training DataLoader to calculate steps from
+        """
+        if self.config.scheduler is None:
+            return
+            
+        from torch.optim.lr_scheduler import OneCycleLR
+        
+        # Special handling for OneCycleLR which needs total_steps
+        if isinstance(self.config.scheduler, OneCycleLR):
+            # Get scheduler kwargs
+            scheduler_dict = self.config.scheduler.state_dict()
+            
+            # Calculate actual steps needed
+            steps_per_epoch = self._calculate_steps_per_epoch(train_loader)
+            total_steps = steps_per_epoch * self.config.epochs
+            
+            # Check if steps match
+            if scheduler_dict['total_steps'] != total_steps:
+                print(f"\n⚠️  OneCycleLR steps mismatch:")
+                print(f"   Configured: {scheduler_dict['total_steps']}")
+                print(f"   Required: {total_steps} ({steps_per_epoch} steps/epoch × {self.config.epochs} epochs)")
+                print(f"   Use: OneCycleLR(optimizer, max_lr, total_steps={total_steps})\n")
+
+    def _wrap_metric(self, name: str, fn: Callable) -> Callable[[torch.Tensor, torch.Tensor], float]:
+        """
+        Wraps a metric function to handle different input signatures and ensure float output.
+        
+        Supports three common signatures:
+        1. fn(y_true=y, y_pred=pred) - preferred
+        2. fn(pred, target) - common in PyTorch
+        3. fn(y, logits) - direct tensor inputs
+        
+        Args:
+            name: Metric name for error reporting
+            fn: Metric function to wrap
+            
+        Returns:
+            Wrapped metric function that accepts (y, logits) and returns float
+        """
+        def wrapped(y: torch.Tensor, logits: torch.Tensor) -> float:
+            try:
+                # Try modern signature first (y_true, y_pred)
+                if logits.dim() > 1 and logits.size(1) > 1:  # Probably classification logits
+                    pred = logits.argmax(dim=1)
+                else:
+                    pred = logits
+                return float(fn(y_true=y, y_pred=pred))
+            except Exception:
+                try:
+                    # Try common PyTorch (pred, target) signature
+                    if logits.dim() > 1 and logits.size(1) > 1:
+                        pred = logits.argmax(dim=1)
+                    else:
+                        pred = logits
+                    return float(fn(pred, y))
+                except Exception:
+                    try:
+                        # Try direct tensor inputs as last resort
+                        return float(fn(y, logits))
+                    except Exception as e:
+                        raise ValueError(
+                            f"Metric '{name}' failed with all signatures. Error: {str(e)}\n"
+                            "Supported signatures:\n"
+                            "1. fn(y_true=y, y_pred=pred) - preferred\n"
+                            "2. fn(pred, target) - common in PyTorch\n"
+                            "3. fn(y, logits) - direct tensor inputs"
+                        ) from e
+        return wrapped
 
     def _compile_model_if_requested(self, model: nn.Module) -> nn.Module:
         """
@@ -476,20 +651,39 @@ class Trainer:
             return model
 
     def _save_checkpoint(self, path: str):
+        """Save checkpoint with original model state dict to ensure compatibility"""
         state = {
-            "model_state": self.model.state_dict(),
+            "model_state": self.original_model.state_dict(),
             "optimizer_state": self.optimizer.state_dict(),
             "scaler_state": self.scaler.state_dict() if hasattr(self, "scaler") else None,
             "config": self.config,
+            "history": self._history,  # Save training history for resuming
         }
         torch.save(state, path)
 
     def _load_checkpoint(self, path: str, map_location: Optional[torch.device] = None):
+        """Load checkpoint into original model and try to sync with compiled model"""
         state = torch.load(path, map_location=map_location or self.device)
-        self.model.load_state_dict(state["model_state"])
+        
+        # Load into original model first
+        self.original_model.load_state_dict(state["model_state"])
+        
+        # Try to sync with compiled/wrapped model if different
+        if self.model is not self.original_model:
+            try:
+                self.model.load_state_dict(self.original_model.state_dict())
+            except Exception:
+                print("\n⚠️  Warning: Could not sync compiled model with original model state dict")
+                print("   Training will continue with loaded weights in original model only\n")
+        
+        # Load optimizer and scaler states
         self.optimizer.load_state_dict(state["optimizer_state"])
         if state.get("scaler_state") and hasattr(self, "scaler"):
             self.scaler.load_state_dict(state["scaler_state"])
+            
+        # Restore training history if available
+        if state.get("history"):
+            self._history = state["history"]
 
     def _run_one_epoch(
         self,
@@ -582,17 +776,21 @@ class Trainer:
                         self.optimizer.step()
                     self.optimizer.zero_grad()
 
+                    # Scheduler step (batch-level) -- required for OneCycleLR
+                    if is_train and self.config.scheduler is not None:
+                        try:
+                            if self.config.scheduler_step_per_batch or self._is_batch_scheduler(self.config.scheduler):
+                                self.config.scheduler.step()
+                        except Exception:
+                            pass
+
             total_loss += loss_value * batch_size
             total_samples += batch_size
 
-            # metrics
+            # Compute metrics (using wrapped metric functions)
             for name, fn in self.metrics.items():
-                try:
-                    metric_val = fn(y_true=y, y_pred=(logits.argmax(dim=1) if logits is not None else logits))
-                except TypeError:
-                    # older metric signature: (y_pred, y_true)
-                    metric_val = fn(logits, y)
-                metric_sums[name] += float(metric_val) * batch_size
+                metric_val = fn(y, logits)  # Wrapper handles signature and output type
+                metric_sums[name] += metric_val * batch_size
 
             logs = {
                 "loss": total_loss / total_samples if total_samples else 0.0,
@@ -606,12 +804,14 @@ class Trainer:
 
             pbar.set_postfix({k: f"{v:.4f}" for k, v in logs.items()})
 
-        # scheduler step after epoch (if provided and training)
-        if is_train and self.config.scheduler is not None:
+        # Scheduler step after epoch (if provided and training)
+        # Skip if scheduler is stepped per batch or is a batch scheduler
+        if (is_train and self.config.scheduler is not None and 
+            not (self.config.scheduler_step_per_batch or self._is_batch_scheduler(self.config.scheduler))):
             try:
                 self.config.scheduler.step()
             except Exception:
-                # some schedulers require a metric input
+                # Some schedulers require a metric input
                 pass
 
         epoch_metrics = {"loss": total_loss / total_samples if total_samples else 0.0}
@@ -627,6 +827,9 @@ class Trainer:
         epochs = epochs or self.config.epochs
         stop_training = False
         early_stopper = next((c for c in self.callbacks if isinstance(c, EarlyStopping)), None)
+        
+        # Configure scheduler with correct steps_per_epoch
+        self._configure_scheduler(train_loader)
         
         # Auto-detect GPU augmentation from train_loader's attached ImageDataLoader
         # EAFP: Easier to Ask for Forgiveness xx Permission (Pythonic!)
@@ -656,12 +859,11 @@ class Trainer:
             logs = {f"train_{k}": v for k, v in train_logs.items()}
             logs.update({f"val_{k}": v for k, v in val_logs.items()})
 
-            # combined metric for checkpoint decision
-            monitored = (
-                logs.get(f"val_{self.config.monitor.split('_')[-1]}")
-                or logs.get(self.config.monitor)
-                or None
-            )
+            # Resolve monitored metric key and value
+            monitor_key = self.config.monitor
+            if not monitor_key.startswith("val_") and f"val_{monitor_key}" in logs:
+                monitor_key = f"val_{monitor_key}"
+            monitored = logs.get(monitor_key)
 
             # Epoch-end callbacks (metrics logging, checkpointing, etc.)
             if self.callbacks:
@@ -691,33 +893,99 @@ class Trainer:
     def evaluate(self, dataloader: DataLoader) -> Dict[str, float]:
         return self._run_one_epoch(dataloader, epoch=-1, training=False)
 
-    def predict(self, dataloader: DataLoader) -> Tuple[torch.Tensor, torch.Tensor]:
+    def predict(
+        self, 
+        dataloader: DataLoader,
+        return_logits: bool = False
+    ) -> Union[Tuple[torch.Tensor, Optional[torch.Tensor]], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+        """
+        Run prediction on the dataloader
+        
+        Args:
+            dataloader: DataLoader to predict on
+            return_logits: If True, return (logits, labels). If False, return (predictions, labels)
+                         For classification, predictions are argmax of logits
+        
+        Returns:
+            If return_logits=False: (predictions, labels) where predictions are class indices
+            If return_logits=True: (logits, predictions, labels) where predictions are class indices
+        """
         self.model.to(self.device)
         self.model.eval()
         preds = []
         trues = []
+        
         with torch.inference_mode():
             for X, y in tqdm(dataloader, desc="Predict"):
                 X = X.to(self.device, non_blocking=True)
-                out = self.model(X)
+                logits = self.model(X)
                 # Keep predictions on device, only move to CPU at the end
-                preds.append(out.detach())
-                trues.append(y)
+                preds.append(logits.detach())
+                if y is not None:  # Handle datasets without labels
+                    trues.append(y)
+        
         # Single large transfer instead of many small ones - much faster
-        all_preds = torch.cat(preds, dim=0).cpu()
-        all_trues = torch.cat(trues, dim=0).cpu() if trues[0].device != torch.device('cpu') else torch.cat(trues, dim=0)
-        return all_preds, all_trues
+        all_logits = torch.cat(preds, dim=0).cpu()
+        all_preds = all_logits.argmax(dim=1) if all_logits.dim() > 1 else all_logits
+        
+        # Handle labels if they exist
+        all_trues = None
+        if len(trues) > 0:
+            all_trues = torch.cat(trues, dim=0).cpu()
+            
+        return (all_logits, all_preds, all_trues) if return_logits else (all_preds, all_trues)
 
 
 
-def mixup_data(x: torch.Tensor, y: torch.Tensor, alpha: float = 0.4):
+def mixup_data(
+    x: torch.Tensor,
+    y: torch.Tensor,
+    alpha: float = 0.4,
+    device: Optional[torch.device] = None
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
+    """
+    Performs mixup on the input batch and targets.
+    
+    Args:
+        x: Input batch tensor of shape [N, ...] where N is batch size
+        y: Target batch tensor of shape [N, ...] where N is batch size
+        alpha: Mixup interpolation coefficient (default: 0.4)
+               - alpha = 0: No mixup
+               - alpha > 0: Beta(alpha, alpha) distribution for mixing factor
+        device: Optional device to place generated tensors on
+    
+    Returns:
+        Tuple containing:
+        - mixed_x: Mixed input batch
+        - y_a: Original targets
+        - y_b: Permuted targets
+        - lam: Mixing coefficient used
+        
+    Example usage:
+        # During training:
+        mixed_x, y_a, y_b, lam = mixup_data(x, y, alpha=0.4)
+        output = model(mixed_x)
+        loss = lam * criterion(output, y_a) + (1 - lam) * criterion(output, y_b)
+    """
     if alpha <= 0:
-        return x, y, None
-    lam = np.random.beta(alpha, alpha)
-    batch_size = x.size()[0]
-    index = torch.randperm(batch_size)
-    mixed_x = lam * x + (1 - lam) * x[index, :]
+        return x, y, y, 1.0
+    
+    # Generate mixing factor from beta distribution
+    lam = float(np.random.beta(alpha, alpha))
+    
+    # Move to appropriate device if specified
+    if device is not None:
+        x = x.to(device)
+        y = y.to(device)
+    
+    # Generate permutation for the batch
+    batch_size = x.size(0)
+    index = torch.randperm(batch_size, device=x.device)
+    
+    # Mix the samples
+    mixed_x = lam * x + (1 - lam) * x[index]
     y_a, y_b = y, y[index]
+    
     return mixed_x, y_a, y_b, lam
 
 
