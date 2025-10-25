@@ -179,10 +179,7 @@ class ImageDataLoader:
         
         if train:
             if self.augmentation_mode == AugmentationMode.OFF:
-                # No augmentation - just resize and crop
-                ops.append(transforms.Resize(int(self.image_size * 1.14)))
-                ops.append(transforms.CenterCrop(self.image_size))
-                
+                pass
             elif self.augmentation_mode == AugmentationMode.MINIMAL:
                 # MINIMAL: Only fast augmentations
                 ops.append(transforms.Resize(int(self.image_size * 1.14)))
