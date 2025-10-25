@@ -2,7 +2,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 import torch
 from dataclasses import dataclass, field
-from typing import Optional, List, Tuple, Callable, Any
+from typing import Optional, List, Tuple, Callable, Any, Union
 from .AugmentationMode import AugmentationMode
 from .KorniaHelper import is_kornia_available, ensure_kornia
 
@@ -34,17 +34,21 @@ class ImageDataLoader:
     def __init__(
         self,
         dataset_cls,
-        image_size,
+        image_size: Union[int, Tuple[int, int]],
         config: Optional[ImageLoaderConfig] = None,
     ):
-        if(dataset_cls is None):
-            raise Exception("Dataset Class (dataset_cls) is not Provided")
-        if(image_size is None):
-            raise Exception("Image Size(image_size) is not provided")
+        if dataset_cls is None:
+            raise ValueError("Dataset Class (dataset_cls) is not provided")
+            
+        # Validate image_size
+        if image_size is None:
+            raise ValueError("Image size must be provided")
+            
+        self.image_size = self._validate_image_size(image_size)
+            
         self.dataset_cls = dataset_cls
         self.data_dir = (config.data_dir if config else "data")
         self.batch_size = (config.batch_size if config else 64)
-        self.image_size = image_size
         self.channels = (config.channels if config else 3)
         self.extra_transforms = (config.extra_transforms if config else [])
         
@@ -182,20 +186,28 @@ class ImageDataLoader:
                 pass
             elif self.augmentation_mode == AugmentationMode.MINIMAL:
                 # MINIMAL: Only fast augmentations
-                ops.append(transforms.Resize(int(self.image_size * 1.14)))
+                # Scale both dimensions by 1.14 for resize
+                resize_size = tuple(int(dim * 1.14) for dim in self.image_size)
+                ops.append(transforms.Resize(resize_size))
                 ops.append(transforms.RandomCrop(self.image_size))
                 ops.append(transforms.RandomHorizontalFlip(p=0.5))
                 
             elif self.augmentation_mode == AugmentationMode.BASIC:
                 # BASIC: Standard augmentations for production
-                ops.append(transforms.RandomResizedCrop(self.image_size, scale=(0.2, 1.0), ratio=(3./4., 4./3.)))
+                # Calculate aspect ratio range based on input dimensions
+                base_ratio = self.image_size[0] / self.image_size[1]
+                ratio = (base_ratio * 0.75, base_ratio * 1.33)  # Allow 25% deviation
+                ops.append(transforms.RandomResizedCrop(self.image_size, scale=(0.2, 1.0), ratio=ratio))
                 ops.append(transforms.RandomHorizontalFlip(p=0.5))
                 if self.color_jitter:
                     ops.append(transforms.RandomApply([transforms.ColorJitter(*self.color_jitter)], p=0.5))
                 
             elif self.augmentation_mode == AugmentationMode.STRONG:
                 # STRONG: Maximum augmentations for research/accuracy
-                ops.append(transforms.RandomResizedCrop(self.image_size, scale=(0.08, 1.0), ratio=(3./4., 4./3.)))
+                # Calculate aspect ratio range based on input dimensions
+                base_ratio = self.image_size[0] / self.image_size[1]
+                ratio = (base_ratio * 0.75, base_ratio * 1.33)  # Allow 25% deviation
+                ops.append(transforms.RandomResizedCrop(self.image_size, scale=(0.08, 1.0), ratio=ratio))
                 ops.append(transforms.RandomHorizontalFlip(p=0.5))
                 if self.color_jitter:
                     ops.append(transforms.RandomApply([transforms.ColorJitter(*self.color_jitter)], p=0.8))
@@ -216,7 +228,9 @@ class ImageDataLoader:
                     pass  # Will be added after ToTensor below
         else:
             # Validation/test transforms (same for all modes)
-            ops.append(transforms.Resize(int(self.image_size * 1.14)))
+            # Scale both dimensions by 1.14 for resize
+            resize_size = tuple(int(dim * 1.14) for dim in self.image_size)
+            ops.append(transforms.Resize(resize_size))
             ops.append(transforms.CenterCrop(self.image_size))
             
         ops.append(transforms.ToTensor())
@@ -351,3 +365,57 @@ class ImageDataLoader:
             print("="*60 + "\n")
 
         return train_loader, test_loader
+
+    @staticmethod
+    def _validate_image_size(size: Union[int, Tuple[int, int], List[int]]) -> Tuple[int, int]:
+        """
+        Validate and normalize image size input.
+        
+        Args:
+            size: Integer for square images or tuple/list of (height, width)
+            
+        Returns:
+            Tuple[int, int]: Validated (height, width)
+            
+        Raises:
+            ValueError: If size is invalid
+        """
+        try:
+            # Handle single integer (square)
+            if isinstance(size, int):
+                if size <= 0:
+                    raise ValueError(f"Size must be positive, got {size}")
+                return (size, size)
+            
+            # Handle sequence of 2 integers
+            h, w = size  # Will raise ValueError if not sequence of 2
+            if not (isinstance(h, int) and isinstance(w, int)):
+                raise ValueError(f"Dimensions must be integers, got {type(h)}, {type(w)}")
+            if h <= 0 or w <= 0:
+                raise ValueError(f"Dimensions must be positive, got {h}, {w}")
+            return (h, w)
+            
+        except (TypeError, ValueError) as e:
+            raise ValueError(
+                f"Image size must be positive int or (height, width) sequence, got {size}"
+            ) from e
+
+    @property
+    def dimensions(self) -> dict:
+        """
+        Get the current image dimensions and aspect ratio information.
+        
+        Returns:
+            dict: Contains:
+                - height (int): Image height
+                - width (int): Image width
+                - aspect_ratio (float): Width/Height ratio
+                - is_square (bool): Whether the image is square
+        """
+        height, width = self.image_size
+        return {
+            'height': height,
+            'width': width,
+            'aspect_ratio': width / height,
+            'is_square': height == width
+        }
