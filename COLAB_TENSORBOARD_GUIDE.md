@@ -49,7 +49,7 @@ trainer.fit(train_loader, val_loader)
 %load_ext tensorboard
 
 # Cell 2: Setup
-from LayerZero import ImageDataLoader, Trainer, TrainerConfig
+from LayerZero import ImageDataLoader, ImageLoaderConfig, Trainer, TrainerConfig
 from torchvision.datasets import CIFAR10
 import torch.nn as nn
 import torch
@@ -62,13 +62,8 @@ model = nn.Sequential(
     nn.Linear(128, 10)
 )
 
-loader = ImageDataLoader(
-    CIFAR10,
-    root='./data',
-    image_size=32,
-    batch_size=128,
-    download=True
-)
+config = ImageLoaderConfig(data_dir='./data', batch_size=128)
+loader = ImageDataLoader(CIFAR10, image_size=32, config=config)
 train_loader, test_loader = loader.get_loaders()
 
 # Cell 4: Train (TensorBoard logs automatically!)

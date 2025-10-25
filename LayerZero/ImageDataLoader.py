@@ -1,46 +1,56 @@
 from torch.utils.data import DataLoader
 from torchvision import transforms
 import torch
+from dataclasses import dataclass, field
+from typing import Optional, List, Tuple, Callable, Any
 from .AugmentationMode import AugmentationMode
 from .KorniaHelper import is_kornia_available, ensure_kornia
+
+
+@dataclass
+class ImageLoaderConfig:
+    data_dir: str = "data"
+    batch_size: int = 64
+    channels: int = 3
+    num_workers: Optional[int] = None
+    shuffle_train: bool = True
+    download: bool = True
+    mean: Optional[Tuple[float, ...]] = None
+    std: Optional[Tuple[float, ...]] = None
+    use_trivialaugment: bool = True
+    use_randaugment: bool = False
+    rand_n: int = 2
+    rand_m: int = 9
+    color_jitter: Optional[Tuple[float, float, float, float]] = (0.4, 0.4, 0.4, 0.1)
+    random_erase_p: float = 0.25
+    persistent_workers: Optional[bool] = None
+    prefetch_factor: int = 2
+    augmentation_mode: AugmentationMode = AugmentationMode.BASIC
+    use_gpu_augmentation: Any = 'auto'  # 'auto', True, False
+    auto_install_kornia: bool = True
+    extra_transforms: List[Callable] = field(default_factory=list)
 
 class ImageDataLoader:
     def __init__(
         self,
         dataset_cls,
         image_size,
-        data_dir="data",
-        batch_size=64,
-        channels=3,
-        num_workers=None,  # Auto-detect optimal value
-        shuffle_train=True,
-        download=True,
-        mean=None,
-        std=None,
-        use_trivialaugment=True,
-        use_randaugment=False,
-        rand_n=2,
-        rand_m=9,
-        color_jitter=(0.4, 0.4, 0.4, 0.1),
-        random_erase_p=0.25,
-        persistent_workers=None,  # Keep workers alive between epochs
-        prefetch_factor=2,  # Number of batches to prefetch per worker
-        augmentation_mode=AugmentationMode.BASIC,  # AugmentationMode.OFF, .MINIMAL, .BASIC, .STRONG
-        use_gpu_augmentation='auto',  # 'auto', True, False - GPU acceleration via Kornia
-        auto_install_kornia=True,  # Auto-install Kornia for GPU augmentation
+        config: Optional[ImageLoaderConfig] = None,
     ):
         if(dataset_cls is None):
             raise Exception("Dataset Class (dataset_cls) is not Provided")
         if(image_size is None):
             raise Exception("Image Size(image_size) is not provided")
         self.dataset_cls = dataset_cls
-        self.data_dir = data_dir
-        self.batch_size = batch_size
+        self.data_dir = (config.data_dir if config else "data")
+        self.batch_size = (config.batch_size if config else 64)
         self.image_size = image_size
-        self.channels = channels
+        self.channels = (config.channels if config else 3)
+        self.extra_transforms = (config.extra_transforms if config else [])
         
         # Auto-detect optimal num_workers based on device and CPU count
-        if num_workers is None:
+        cfg_num_workers = config.num_workers if config else None
+        if cfg_num_workers is None:
             if torch.cuda.is_available():
                 # For GPU: use more workers to keep GPU fed
                 self.num_workers = min(4, torch.multiprocessing.cpu_count())
@@ -49,40 +59,47 @@ class ImageDataLoader:
                 # Data loading competes with model computation on CPU
                 self.num_workers = min(2, max(1, torch.multiprocessing.cpu_count() // 2))
         else:
-            self.num_workers = num_workers
+            self.num_workers = cfg_num_workers
             
         # persistent_workers reduces worker spawn overhead
-        if persistent_workers is None:
+        cfg_persistent_workers = config.persistent_workers if config else None
+        if cfg_persistent_workers is None:
             self.persistent_workers = self.num_workers > 0
         else:
-            self.persistent_workers = persistent_workers
+            self.persistent_workers = cfg_persistent_workers
             
-        self.prefetch_factor = prefetch_factor if self.num_workers > 0 else None
-        self.shuffle_train = shuffle_train
-        self.download = download
+        cfg_prefetch_factor = config.prefetch_factor if config else 2
+        self.prefetch_factor = cfg_prefetch_factor if self.num_workers > 0 else None
+        self.shuffle_train = (config.shuffle_train if config else True)
+        self.download = (config.download if config else True)
 
-        if mean is None or std is None:
-            if channels == 1:
+        cfg_mean = config.mean if config else None
+        cfg_std = config.std if config else None
+        if cfg_mean is None or cfg_std is None:
+            if self.channels == 1:
                 self.mean, self.std = (0.5,), (0.5,)
             else:
                 self.mean, self.std = (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
         else:
-            self.mean, self.std = mean, std
+            self.mean, self.std = cfg_mean, cfg_std
 
         # Set augmentation mode
-        if not isinstance(augmentation_mode, AugmentationMode):
+        cfg_aug_mode = config.augmentation_mode if config else AugmentationMode.BASIC
+        if not isinstance(cfg_aug_mode, AugmentationMode):
             raise ValueError(
                 f"augmentation_mode must be an AugmentationMode enum. "
-                f"Got: {type(augmentation_mode)}. "
+                f"Got: {type(cfg_aug_mode)}. "
                 f"Use: AugmentationMode.MINIMAL, .BASIC, or .STRONG"
             )
-        self.augmentation_mode = augmentation_mode
+        self.augmentation_mode = cfg_aug_mode
         
         # Handle GPU augmentation (separate from augmentation intensity)
-        if use_gpu_augmentation == 'auto':
+        cfg_use_gpu_aug = config.use_gpu_augmentation if config else 'auto'
+        cfg_auto_install_kornia = config.auto_install_kornia if config else True
+        if cfg_use_gpu_aug == 'auto':
             # Auto-detect: Use GPU if available and Kornia can be installed
             if torch.cuda.is_available():
-                if not is_kornia_available() and auto_install_kornia:
+                if not is_kornia_available() and cfg_auto_install_kornia:
                     print("\n" + "="*60)
                     print("🚀 GPU DETECTED! Setting up GPU-accelerated augmentation...")
                     print("="*60)
@@ -109,11 +126,11 @@ class ImageDataLoader:
                 print(f"   ({self.augmentation_mode.description})\n")
         else:
             # Explicit True/False
-            self.use_gpu_augmentation = bool(use_gpu_augmentation)
+            self.use_gpu_augmentation = bool(cfg_use_gpu_aug)
             
             if self.use_gpu_augmentation:
                 if not is_kornia_available():
-                    if auto_install_kornia:
+                    if cfg_auto_install_kornia:
                         print("\n📦 GPU augmentation requested. Installing Kornia...")
                         ensure_kornia(auto_install=True, verbose=True)
                     
@@ -138,14 +155,14 @@ class ImageDataLoader:
                 print(f"\nℹ️  GPU augmentation disabled. Using CPU augmentation.")
                 print(f"   Mode: {self.augmentation_mode.name} ({self.augmentation_mode.description})\n")
         
-        self.use_trivialaugment = use_trivialaugment
-        self.use_randaugment = use_randaugment
-        self.rand_n = rand_n
-        self.rand_m = rand_m
-        self.color_jitter = color_jitter
-        self.random_erase_p = random_erase_p
+        self.use_trivialaugment = (config.use_trivialaugment if config else True)
+        self.use_randaugment = (config.use_randaugment if config else False)
+        self.rand_n = (config.rand_n if config else 2)
+        self.rand_m = (config.rand_m if config else 9)
+        self.color_jitter = (config.color_jitter if config else (0.4, 0.4, 0.4, 0.1))
+        self.random_erase_p = (config.random_erase_p if config else 0.25)
 
-    def build_transforms(self, train=True):
+    def build_transforms(self, train: bool = True, extra_ops: Optional[List[Callable]] = None):
         """
         Build transform pipeline based on augmentation_mode.
         
@@ -158,7 +175,7 @@ class ImageDataLoader:
         Note: If use_gpu_augmentation=True, CPU transforms are minimal and
               heavy augmentations are applied on GPU via GPUAugmentation.
         """
-        ops = []
+        ops: List[Callable] = list(extra_ops) if extra_ops else []
         
         if train:
             if self.augmentation_mode == AugmentationMode.OFF:
@@ -271,13 +288,13 @@ class ImageDataLoader:
             root=self.data_dir,
             train=True,
             download=self.download,
-            transform=self.build_transforms(train=True)
+            transform=self.build_transforms(train=True, extra_ops=self.extra_transforms)
         )
         test_dataset = self.dataset_cls(
             root=self.data_dir,
             train=False,
             download=self.download,
-            transform=self.build_transforms(train=False)
+            transform=self.build_transforms(train=False, extra_ops=self.extra_transforms)
         )
 
         # pin_memory speeds up CPU->GPU transfer but adds overhead on CPU-only

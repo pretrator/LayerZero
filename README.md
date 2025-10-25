@@ -72,7 +72,7 @@ pip install LayerZero
 ```python
 import torch
 from torch import nn
-from LayerZero import ImageDataLoader, Trainer, TrainerConfig
+from LayerZero import ImageDataLoader, ImageLoaderConfig, Trainer, TrainerConfig
 from torchvision.datasets import CIFAR10
 
 # Model
@@ -84,14 +84,12 @@ model = nn.Sequential(
 )
 
 # Data
-loader = ImageDataLoader(
-    CIFAR10,
-    root='./data',
-    image_size=32,
+config = ImageLoaderConfig(
+    data_dir='./data',
     batch_size=128,
-    download=True,
-    use_gpu_augmentation='auto'  # Automatic GPU acceleration
+    use_gpu_augmentation='auto',  # Automatic GPU acceleration
 )
+loader = ImageDataLoader(CIFAR10, image_size=32, config=config)
 
 train_loader, test_loader = loader.get_loaders()
 
@@ -139,26 +137,23 @@ tensorboard --logdir=runs
 ### Augmentation Modes
 
 ```python
-from LayerZero import ImageDataLoader, AugmentationMode
+from LayerZero import ImageDataLoader, ImageLoaderConfig, AugmentationMode
 
-loader = ImageDataLoader(
-    CIFAR10,
+config = ImageLoaderConfig(
     augmentation_mode=AugmentationMode.MINIMAL,  # Flip + Crop
-    # AugmentationMode.BASIC,   # + ColorJitter (default)
-    # AugmentationMode.STRONG,  # + Rotation + Blur + Erasing
-    # AugmentationMode.OFF,     # No augmentation
 )
+loader = ImageDataLoader(CIFAR10, image_size=224, config=config)
 ```
 
 ### GPU Augmentation
 
 ```python
 # Automatic integration with Trainer (Recommended)
-loader = ImageDataLoader(
-    CIFAR10,
+config = ImageLoaderConfig(
     use_gpu_augmentation='auto',  # Auto-detect GPU and Kornia
-    auto_install_kornia=True       # Install if missing
+    auto_install_kornia=True      # Install if missing
 )
+loader = ImageDataLoader(CIFAR10, image_size=224, config=config)
 
 train_loader, test_loader = loader.get_loaders()
 
@@ -546,10 +541,8 @@ config = TrainerConfig(amp=True)
 ### Slow on CPU
 Use minimal augmentation:
 ```python
-loader = ImageDataLoader(
-    ...,
-    augmentation_mode=AugmentationMode.MINIMAL
-)
+config = ImageLoaderConfig(augmentation_mode=AugmentationMode.MINIMAL)
+loader = ImageDataLoader(CIFAR10, image_size=224, config=config)
 ```
 
 ---

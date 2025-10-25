@@ -1,7 +1,7 @@
 # LayerZero/__init__.py
 __version__ = "0.4.3"
 
-from .ImageDataLoader import ImageDataLoader
+from .ImageDataLoader import ImageDataLoader, ImageLoaderConfig
 from .Helper import Helper
 from .Trainer import (
     Trainer, 
@@ -26,7 +26,8 @@ from .KorniaHelper import (
 try:
     from .GPUAugmentation import GPUAugmentation, HybridAugmentation
     __all__ = [
-        "ImageDataLoader", 
+        "ImageDataLoader",
+        "ImageLoaderConfig",
         "Helper", 
         "Trainer", 
         "TrainerConfig",
@@ -45,7 +46,8 @@ try:
     ]
 except ImportError:
     __all__ = [
-        "ImageDataLoader", 
+        "ImageDataLoader",
+        "ImageLoaderConfig",
         "Helper", 
         "Trainer", 
         "TrainerConfig",
