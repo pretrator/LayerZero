@@ -22,7 +22,8 @@ class ImageLoaderConfig:
     augmentation_mode: AugmentationMode = AugmentationMode.BASIC
     use_gpu_augmentation: Any = 'auto'  # 'auto', True, False
     auto_install_kornia: bool = True
-    extra_transforms: List[Callable] = field(default_factory=list)
+    train_transforms: List[Callable] = field(default_factory=list)
+    test_transforms: List[Callable] = field(default_factory=list)
 
 class ImageDataLoader:
     def __init__(
@@ -318,13 +319,13 @@ class ImageDataLoader:
             root=self.data_dir,
             train=True,
             download=self.download,
-            transform=self.build_transforms(train=True, extra_ops=self.extra_transforms)
+            transform=self.build_transforms(train=True, extra_ops=self.train_transforms)
         )
         test_dataset = self.dataset_cls(
             root=self.data_dir,
             train=False,
             download=self.download,
-            transform=self.build_transforms(train=False, extra_ops=self.extra_transforms)
+            transform=self.build_transforms(train=False, extra_ops=self.test_transforms)
         )
 
         # pin_memory speeds up CPU->GPU transfer but adds overhead on CPU-only
