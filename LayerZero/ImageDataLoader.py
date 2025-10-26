@@ -41,7 +41,8 @@ class ImageDataLoader:
         self.data_dir = (config.data_dir if config else "data")
         self.batch_size = (config.batch_size if config else 64)
         self.channels = (config.channels if config else 3)
-        self.extra_transforms = (config.extra_transforms if config else [])
+        self.train_transforms = train_transforms
+        self.test_transforms = test_transforms
         
         # Auto-detect optimal num_workers based on device and CPU count
         cfg_num_workers = config.num_workers if config else None
