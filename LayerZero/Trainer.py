@@ -28,7 +28,6 @@ import torch
 from torch import nn, optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-import numpy as np
 
 @dataclass
 class TrainerConfig:
@@ -697,7 +696,8 @@ class Trainer:
         else:
             self.model.eval()
 
-        total_loss = 0.0
+        # Use GPU tensors to accumulate metrics (avoid CPU sync)
+        total_loss_tensor = torch.tensor(0.0, device=self.device)
         metric_sums = {k: 0.0 for k in self.metrics.keys()}
         total_samples = 0
 
@@ -750,8 +750,8 @@ class Trainer:
                         print("   Fix: Check model architecture OR set compile_model=False\n")
                 raise
 
-            # normalize loss across accumulation steps
-            loss_value = loss.detach().item() if isinstance(loss, torch.Tensor) else float(loss)
+            # Keep loss on GPU to avoid synchronization (PERFORMANCE OPTIMIZATION)
+            # Only sync at epoch end or when updating progress bar (less frequently)
             if is_train and self.config.grad_accum_steps > 1:
                 loss = loss / float(self.config.grad_accum_steps)
 
@@ -784,7 +784,8 @@ class Trainer:
                         except Exception:
                             pass
 
-            total_loss += loss_value * batch_size
+            # Accumulate loss on GPU (no synchronization!)
+            total_loss_tensor += loss.detach() * batch_size
             total_samples += batch_size
 
             # Compute metrics (using wrapped metric functions)
@@ -792,17 +793,28 @@ class Trainer:
                 metric_val = fn(y, logits)  # Wrapper handles signature and output type
                 metric_sums[name] += metric_val * batch_size
 
-            logs = {
-                "loss": total_loss / total_samples if total_samples else 0.0,
-                **{name: metric_sums[name] / total_samples for name in metric_sums},
-            }
-
+            # Update progress bar every 10 batches to reduce sync overhead
+            # Only synchronize loss from GPU to CPU when needed for display
+            if batch_idx % 10 == 0 or (batch_idx + 1) == len(dataloader):
+                # Synchronize only when updating progress bar (minimizes overhead)
+                current_loss = (total_loss_tensor.item() / total_samples) if total_samples else 0.0
+                logs = {
+                    "loss": current_loss,
+                    **{name: metric_sums[name] / total_samples for name in metric_sums},
+                }
+                pbar.set_postfix({k: f"{v:.4f}" for k, v in logs.items()})
+            
             # Batch-end callbacks (only if callbacks exist)
+            # Note: logs might be stale if not at update interval
             if self.callbacks:
+                # For callbacks, sync loss if needed (they expect up-to-date values)
+                current_loss = (total_loss_tensor.item() / total_samples) if total_samples else 0.0
+                logs = {
+                    "loss": current_loss,
+                    **{name: metric_sums[name] / total_samples for name in metric_sums},
+                }
                 for cb in self.callbacks:
                     cb.on_batch_end(self, batch_idx, logs)
-
-            pbar.set_postfix({k: f"{v:.4f}" for k, v in logs.items()})
 
         # Scheduler step after epoch (if provided and training)
         # Skip if scheduler is stepped per batch or is a batch scheduler
@@ -814,7 +826,9 @@ class Trainer:
                 # Some schedulers require a metric input
                 pass
 
-        epoch_metrics = {"loss": total_loss / total_samples if total_samples else 0.0}
+        # Final synchronization at epoch end (only once per epoch)
+        final_loss = (total_loss_tensor.item() / total_samples) if total_samples else 0.0
+        epoch_metrics = {"loss": final_loss}
         epoch_metrics.update({name: metric_sums[name] / total_samples for name in metric_sums})
         return epoch_metrics
 
@@ -970,15 +984,17 @@ def mixup_data(
     if alpha <= 0:
         return x, y, y, 1.0
     
-    # Generate mixing factor from beta distribution
-    lam = float(np.random.beta(alpha, alpha))
-    
     # Move to appropriate device if specified
     if device is not None:
         x = x.to(device)
         y = y.to(device)
     
-    # Generate permutation for the batch
+    # Generate mixing factor from beta distribution using PyTorch (GPU-compatible)
+    # Use torch distributions instead of numpy for GPU acceleration
+    beta_dist = torch.distributions.Beta(torch.tensor(alpha), torch.tensor(alpha))
+    lam = float(beta_dist.sample().item())
+    
+    # Generate permutation for the batch (on same device as input)
     batch_size = x.size(0)
     index = torch.randperm(batch_size, device=x.device)
     

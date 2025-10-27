@@ -149,17 +149,6 @@ class GPUAugmentation(nn.Module):
         transforms = self.K.AugmentationSequential(*augs, data_keys=["input"])
         transforms = transforms.to(self.device)
         
-        # Verify transforms are on correct device
-        if self.device == 'cuda':
-            # Check if Kornia operations are properly on CUDA
-            for module in transforms.children():
-                if hasattr(module, 'to'):
-                    try:
-                        # Ensure each submodule is on CUDA
-                        module.to(self.device)
-                    except Exception:
-                        pass
-        
         return transforms
     
     def forward(self, x):
