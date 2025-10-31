@@ -1,6 +1,6 @@
 # LayerZero
 
-A modular PyTorch training framework with automatic performance optimizations.
+Performance Focussed PyTorch training framework.
 
 ## Features
 
